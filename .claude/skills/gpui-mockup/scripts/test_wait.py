@@ -136,10 +136,14 @@ class WaitTests(unittest.TestCase):
             self.assertEqual(json.loads((self.root / "called").read_text()),
                              ["browser", "feedback", "--wait", "60"])
             self.assertEqual(Path(f"{self.feedback}.1").read_text(), stdout)
-            # Windows reports a gone pid as WinError 87, not ProcessLookupError.
-            expected = OSError if os.name == "nt" else ProcessLookupError
-            with self.assertRaises(expected):
+            with self.assertRaises(OSError) as gone:
                 os.kill(int(pid_file.read_text()), 0)
+            # Windows reports a gone pid as WinError 87 (invalid parameter),
+            # not ProcessLookupError; any other error leaves the child unproven.
+            if os.name == "nt":
+                self.assertEqual(gone.exception.winerror, 87)
+            else:
+                self.assertIsInstance(gone.exception, ProcessLookupError)
         finally:
             if process.poll() is None:
                 process.terminate()
