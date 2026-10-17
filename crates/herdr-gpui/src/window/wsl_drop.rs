@@ -50,11 +50,8 @@ impl HerdrWindow {
         if self.wsl_paste.is_some() {
             return Err(Error::WslPasteBusy);
         }
-        // Records where held keys go before any are held. A held drop is
-        // delivered by the flush itself, which has just recorded it.
-        if !self.delivering_held() {
-            self.flush_pending_input(cx);
-        }
+        // Records where held keys go before any are held.
+        self.flush_pending_input(cx);
         let endpoint = &self.endpoints[self.selected_endpoint];
         let snapshot = self.live.snapshot.as_ref().ok_or(Error::NoSnapshot)?;
         let token = Arc::new(());
