@@ -11,6 +11,7 @@ use herdr_client::{
 use std::sync::Arc;
 
 mod remote;
+mod remote_saves;
 
 #[test]
 fn paths_resolve_under_home_or_the_pane_directory() {
