@@ -18,6 +18,7 @@ mod device_themes;
 mod double_shift;
 pub(crate) mod file_drop;
 mod file_links;
+pub(crate) use file_links::opened;
 mod find;
 mod flash;
 pub(crate) use commands::run_window_command;
@@ -39,6 +40,8 @@ mod plugin_selection;
 pub(crate) mod prefix;
 mod reconnecting;
 mod regions;
+mod remote_paths;
+pub(crate) use remote_paths::RemotePath;
 mod render;
 mod report_issue;
 mod select_hint;
@@ -286,6 +289,8 @@ pub(crate) struct HerdrWindow {
     pub(crate) regions: Vec<regions::RegionLayers>,
     /// Pages remote agents asked for, waiting for their port's forward.
     pub(crate) remote_browser: Vec<crate::remote_browser::Forwarding>,
+    /// Copies of files on SSH hosts that clicks fetched; see `remote_files`.
+    pub(crate) remote_files: crate::remote_files::RemoteFiles,
     /// A `worktree.remove` queued after its dialog closed.
     pub(crate) removal: Option<menu::Removal>,
     /// Herdr's resize mode: direction keys resize the focused pane until

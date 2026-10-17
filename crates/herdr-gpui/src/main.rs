@@ -112,6 +112,7 @@ mod px0;
 mod release_notes;
 mod remote;
 mod remote_browser;
+mod remote_files;
 mod reorder;
 mod repo_items;
 mod restart_manager;

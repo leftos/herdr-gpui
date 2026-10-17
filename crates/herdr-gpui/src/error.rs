@@ -254,6 +254,8 @@ pub enum Error {
     RemoteAgentTools(#[source] herdr_client::Error),
     #[error(transparent)]
     RemoteControl(#[from] crate::remote::Error),
+    #[error(transparent)]
+    RemoteFiles(#[from] crate::remote_files::Error),
     #[error("{method}: {source}")]
     Request {
         method: herdr_client::Method,
