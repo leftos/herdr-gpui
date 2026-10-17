@@ -22,6 +22,7 @@ mod page;
 mod page_title;
 mod pr;
 mod pr_actions;
+mod remote_file_dialogs;
 mod sessions;
 mod settings;
 mod shortcut_editor;

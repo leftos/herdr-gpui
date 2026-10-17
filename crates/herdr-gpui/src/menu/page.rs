@@ -80,11 +80,16 @@ pub(crate) enum Page {
     PrMerge,
     /// The open pull request's checks and review conversation.
     PrReview,
+    /// A remote file's host changed since its copy was synced, so a save
+    /// was not uploaded.
+    RemoteConflict,
     /// Pairing a phone for remote control: the QR, then the approval.
     RemoteControl,
     /// The title bar's list of paired phones, to disconnect one or pair
     /// another.
     RemoteDevices,
+    /// Asks before a save to a remote file's copy is uploaded.
+    RemoteUpload,
     RemoveDevice,
     /// Confirming a saved WSL distribution should be forgotten.
     RemoveWsl,
