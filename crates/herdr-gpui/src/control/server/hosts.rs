@@ -1,11 +1,12 @@
-//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, `security`, and
-//! `automation approve`: what the
+//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, `remote-files`,
+//! `security`, and `automation approve`: what the
 //! window gathers about its hosts, read from the state it already keeps.
 //! Nothing here starts a lookup, a scan, or a sample of its own; a request
 //! answers from the latest one, and says why when there is none.
 mod automation;
 mod ports;
 mod pr;
+mod remote_files;
 mod security;
 
 #[cfg(test)]
@@ -68,6 +69,9 @@ pub(super) fn serve(
         }
         HostOp::CloudImages { provider } => in_window(caller, cx, |view, _, cx| {
             cloud_images(view, caller, provider.as_deref(), cx)
+        }),
+        HostOp::RemoteFiles => in_window(caller, cx, |view, _, _| {
+            remote_files::list(view.remote_files.list(), remote_files::LIST_BUDGET)
         }),
     };
     incoming.respond(response);

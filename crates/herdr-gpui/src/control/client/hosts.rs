@@ -1,5 +1,5 @@
-//! `pr`, `host`, `cloud`, `ports`, `usage`, `system`, `security`, and
-//! `automation`.
+//! `pr`, `host`, `cloud`, `ports`, `remote-files`, `usage`, `system`,
+//! `security`, and `automation`.
 mod batch;
 mod cloud;
 mod exec;
@@ -17,7 +17,7 @@ use crate::{
     },
     control::protocol::{
         ErrorCode, Request, Response,
-        hosts::{HostOp, Reply},
+        hosts::{HostOp, RemoteCopy, Reply},
     },
 };
 
@@ -108,6 +108,27 @@ pub(super) fn ports(command: PortsCommand, context: &Context) -> crate::Result<O
         }
         response => Err(unexpected(response)),
     }
+}
+
+pub(super) fn remote_files(context: &Context) -> crate::Result<Output> {
+    match context.call(Request::Host, HostOp::RemoteFiles)? {
+        Response::Host {
+            reply: Reply::RemoteFiles { copies, omitted },
+        } => remote_files_output(&copies, omitted),
+        response => Err(unexpected(response)),
+    }
+}
+
+/// The copies, one per line, exiting [`super::exit::NOTHING`] when there
+/// are none.
+fn remote_files_output(copies: &[RemoteCopy], omitted: usize) -> crate::Result<Output> {
+    let json = serde_json::json!({ "copies": copies, "omitted": omitted });
+    let output = Output::data(text::remote_files(copies, omitted), &json)?;
+    Ok(if copies.is_empty() && omitted == 0 {
+        output.nothing()
+    } else {
+        output
+    })
 }
 
 pub(super) fn usage(context: &Context) -> crate::Result<Output> {
