@@ -47,8 +47,8 @@ pub(crate) enum Delivery {
     /// Queued on the connection, or there was nothing to send.
     Queued,
     /// A slot is reserved on the connection while the clipboard is read or
-    /// an image prepared in the background; whether it is filled is known
-    /// only when that work ends.
+    /// an image prepared in the background, or a WSL drop's paths are being
+    /// mapped; whether it is filled is known only when that work ends.
     Preparing,
     /// A remote file copy started; its paths are pasted when it completes.
     Copying,
@@ -101,6 +101,9 @@ pub(crate) struct PendingInput {
     /// after it waits for its outcome. A preparation dropped without one
     /// leaves this dangling, and the input behind it is discarded.
     behind: Option<Weak<()>>,
+    /// Held input is being delivered, so work a held entry starts must not
+    /// flush the queue it was taken from.
+    delivering: bool,
 }
 
 impl PendingInput {
@@ -379,7 +382,11 @@ impl HerdrWindow {
         // again and must not deliver the entries after it first.
         let held = std::mem::take(&mut self.pending_input.events);
         match self.pending_input.target.clone().filter(|_| unchanged) {
-            Some(target) => self.deliver_held(&target, held, cx),
+            Some(target) => {
+                let outer = std::mem::replace(&mut self.pending_input.delivering, true);
+                self.deliver_held(&target, held, cx);
+                self.pending_input.delivering = outer;
+            }
             None => {
                 self.local_error = Some("Input not sent: focus changed before it arrived".into());
                 cx.notify();
@@ -435,7 +442,7 @@ impl HerdrWindow {
                     let mut waiting: VecDeque<Held> = held.collect();
                     waiting.append(&mut self.pending_input.events);
                     self.pending_input.events = waiting;
-                    self.pending_input.behind = self.newest_preparation();
+                    self.pending_input.behind = self.preparation_behind();
                     return;
                 }
                 Delivery::Copying | Delivery::Refused => {
@@ -449,10 +456,27 @@ impl HerdrWindow {
         }
     }
 
-    /// Whether held input waits for a background preparation's outcome, so
-    /// new input must wait behind it too.
+    /// Whether held input waits for a background preparation's outcome or a
+    /// WSL drop's paths, so new input must wait behind it too.
     pub(super) fn waits_behind_preparation(&self) -> bool {
-        self.pending_input.behind.is_some()
+        self.pending_input.behind.is_some() || self.wsl_paste.is_some()
+    }
+
+    /// Whether held input is being delivered, so a held entry must not
+    /// flush the queue it was taken from.
+    pub(super) fn delivering_held(&self) -> bool {
+        self.pending_input.delivering
+    }
+
+    /// What input held after a preparation that just started waits for: a
+    /// WSL drop holds it through `wsl_paste` until its paths are sent, and
+    /// anything else through the image preparation started last.
+    fn preparation_behind(&self) -> Option<Weak<()>> {
+        if self.wsl_paste.is_some() {
+            None
+        } else {
+            self.newest_preparation()
+        }
     }
 
     /// The preparation identified by `token` ended as `delivery`. Input held
@@ -477,7 +501,7 @@ impl HerdrWindow {
             Delivery::Queued => {
                 self.flush_pending_input(cx);
             }
-            Delivery::Preparing => self.pending_input.behind = self.newest_preparation(),
+            Delivery::Preparing => self.pending_input.behind = self.preparation_behind(),
             Delivery::Copying | Delivery::Refused => self.discard_all_held(delivery, cx),
         }
     }

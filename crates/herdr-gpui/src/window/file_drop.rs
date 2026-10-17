@@ -154,7 +154,9 @@ impl HerdrWindow {
                 }
                 return self
                     .paste_wsl_files(target.clone(), distro.clone(), paths.to_vec(), cx)
-                    .map(|()| Delivery::Queued);
+                    // The paths go out once mapped; input held after the drop
+                    // waits for them.
+                    .map(|()| Delivery::Preparing);
             }
             if remote {
                 if !self.accepts_remote_images() {
