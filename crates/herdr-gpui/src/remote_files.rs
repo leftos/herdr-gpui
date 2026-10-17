@@ -230,10 +230,6 @@ impl RemoteFiles {
     }
 
     /// Every copy, with where it stands against its host.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the remote-files list command")
-    )]
     pub(crate) fn list(&self) -> impl Iterator<Item = Listed<'_>> {
         self.copies.iter().map(|((target, path), copy)| Listed {
             target,
