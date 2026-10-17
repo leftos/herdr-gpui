@@ -565,6 +565,15 @@ pub fn shared_script_command(
 /// before connecting directly.
 const SHARED_WAIT: Duration = Duration::from_secs(10);
 
+/// A one-shot, noninteractive `ssh` child that runs `script` under Windows
+/// PowerShell on a Windows OpenSSH host, passed as `-EncodedCommand` so
+/// neither `cmd.exe` nor PowerShell as the login shell reinterprets it, with
+/// the bridge's connection policy. The caller owns the child.
+pub(crate) fn powershell_script_command(target: &str, script: &str) -> Result<Command> {
+    validate_target(target)?;
+    Ok(command(target, &powershell::encoded_command(script)))
+}
+
 pub(crate) fn connect(
     target: &str,
     session: &str,
