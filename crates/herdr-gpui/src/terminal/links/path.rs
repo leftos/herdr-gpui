@@ -19,8 +19,8 @@ pub(super) struct PlainPath<'a> {
     pub(super) path: Cow<'a, str>,
     /// The line the suffix names.
     pub(super) line: Option<u32>,
-    /// Whether the path runs to the end of the row, where it may continue on
-    /// the next one.
+    /// Whether the path runs to the end of the text read, where it may
+    /// continue off-screen.
     pub(super) open: bool,
 }
 
