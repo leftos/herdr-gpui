@@ -285,3 +285,5 @@ release-check:
     actionlint .github/workflows/*.yml
     zizmor .github/
     git diff --check
+
+import? '.gate/ci.just'

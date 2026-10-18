@@ -1,0 +1,1 @@
+patterns = ["cargo test --locked -p herdr-gpui --all-features credential_manager"]
