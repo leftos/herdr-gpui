@@ -10,14 +10,17 @@
 //! daemon first when it offers activation, which lets a plugin link handler
 //! claim it, `file://` links included; otherwise, or when nothing claims it,
 //! this client opens the address or file itself. A handler that fails spends
-//! the click. Daemons without these methods keep the row-local detector.
+//! the click. Daemons without these methods keep the local detector, which
+//! also reads a link that wraps onto the next rows whole. Where the local
+//! reading strictly contains the daemon's, as at an application's word wrap,
+//! the local one is underlined and opened.
 
 use super::{HerdrWindow, RemotePath, file_links::FileLink};
 use crate::terminal::PaneLink;
 use crate::{
     browser::WebUrl,
     links::{Activation, LinkCell, LinkInbox, LinkRequest, ResolvedLink},
-    terminal::{ExternalUrl, RowLink, RowTarget},
+    terminal::{ExternalUrl, LinkReading, RowLink, RowTarget},
 };
 use gpui::{Context, Modifiers, Pixels, Point, Task, Window};
 use std::{
@@ -86,6 +89,10 @@ struct PendingActivation {
     /// What the row-local detector read at the click, opened when the
     /// daemon neither handles nor reads a web address there.
     fallback: Option<Fallback>,
+    /// Whether the fallback wins over the address the daemon declines with:
+    /// the local reading strictly contains the daemon's link, which it
+    /// reads cut off at an application's word wrap.
+    local_first: bool,
     in_tab: bool,
 }
 
@@ -200,10 +207,50 @@ impl HerdrWindow {
             .then_some(link)
     }
 
-    /// The verified row-local link under the pointer while the link modifier
+    /// The verified local link under the pointer while the link modifier
     /// is held.
     pub(crate) fn hovered_local_link(&self) -> Option<&RowLink> {
         self.links.local.as_ref()
+    }
+
+    /// How this client reads plain text on the selected daemon.
+    pub(crate) fn link_reading(&self) -> LinkReading {
+        LinkReading {
+            raw_url_wraps: !self.live.supports_link_resolve,
+        }
+    }
+
+    /// The cells to underline: the daemon's resolved link while it reads
+    /// the content on screen, unless the local reading strictly contains
+    /// it, as it does for an application's word wrap, which reads to the
+    /// daemon as separate lines; otherwise the local reading.
+    pub(crate) fn underlined_link_rows(&self) -> Vec<(u16, std::ops::Range<u16>)> {
+        let daemon: Option<Vec<_>> = self
+            .live
+            .surface
+            .as_deref()
+            .zip(self.hovered_daemon_link())
+            .filter(|(surface, link)| link.cell.current(surface))
+            .map(|(_, link)| link.frame_rows().collect());
+        let local = self.hovered_local_link();
+        match (daemon, local) {
+            (Some(daemon), Some(local)) if local.strictly_contains(&daemon) => local.rows.clone(),
+            (Some(daemon), _) => daemon,
+            (None, Some(local)) => local.rows.clone(),
+            (None, None) => Vec::new(),
+        }
+    }
+
+    /// Whether the local reading at `position` strictly contains the
+    /// daemon's resolved link there, so a click opens the local target when
+    /// no handler claims it.
+    fn local_contains_daemon(&self, position: Point<Pixels>) -> bool {
+        let Some(daemon) = self.hovered_daemon_link() else {
+            return false;
+        };
+        let rows: Vec<_> = daemon.frame_rows().collect();
+        self.local_link_at(position)
+            .is_some_and(|local| local.link.strictly_contains(&rows))
     }
 
     /// The cell at `position` when it lies on the hovered resolved link.
@@ -528,13 +575,18 @@ impl HerdrWindow {
             if self.links.activating.is_some() {
                 return true;
             }
+            let local_first = self.local_contains_daemon(release.position);
             let connection = &self.endpoints[self.selected_endpoint].connection;
             match connection.request_link(LinkRequest::Activate, cell) {
                 Ok(id) => {
                     self.links.activating = Some(InFlight {
                         id,
                         inbox: connection.links.clone(),
-                        context: PendingActivation { fallback, in_tab },
+                        context: PendingActivation {
+                            fallback,
+                            local_first,
+                            in_tab,
+                        },
                     });
                     return true;
                 }
@@ -548,7 +600,11 @@ impl HerdrWindow {
     fn finish_activation(
         &mut self,
         activation: Activation,
-        PendingActivation { fallback, in_tab }: PendingActivation,
+        PendingActivation {
+            fallback,
+            local_first,
+            in_tab,
+        }: PendingActivation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -559,7 +615,13 @@ impl HerdrWindow {
                 cx.notify();
             }
             Activation::Declined(url) => {
-                self.open_link(url.map(Fallback::Web).or(fallback), in_tab, window, cx);
+                let declined = url.map(Fallback::Web);
+                let link = if local_first {
+                    fallback.or(declined)
+                } else {
+                    declined.or(fallback)
+                };
+                self.open_link(link, in_tab, window, cx);
             }
         }
     }

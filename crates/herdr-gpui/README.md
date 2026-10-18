@@ -2121,11 +2121,14 @@ its dashes turn solid once its target is verified:
 - **A `file://` address on another host**, or a target that is no valid
   address, keeps its dashes; a click says why nothing opens.
 
-A plain URL is read from its row. One that reaches the pane's right edge may
-wrap onto the next row; a daemon that offers `pane.link.resolve` reads it
-whole, and otherwise it needs explicit terminal hyperlink metadata. Paths in
-panes on SSH hosts name that host's files; see
-[Files on SSH Hosts](#files-on-ssh-hosts).
+A plain URL or path that reaches the pane's right edge is a link of its own
+when nothing on the next row continues it. One that wraps onto the next rows,
+by the terminal or by an application's word wrap, including inside boxes,
+table cells, and indented replies, is underlined on every row and opens
+whole. A daemon that offers `pane.link.resolve` reads a URL the terminal
+wrapped itself. Text that runs to the end of the pane's bottom row, or ends
+in `…`, is not read as a link, since it may be cut off. Paths in panes on SSH
+hosts name that host's files; see [Files on SSH Hosts](#files-on-ssh-hosts).
 
 A file opens in your terminal editor at the printed line, in a new pane split
 to the right of the pane that printed it (see [Code Navigation](#code-navigation)).

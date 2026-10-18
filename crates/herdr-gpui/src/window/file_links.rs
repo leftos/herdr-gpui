@@ -16,7 +16,7 @@
 
 use super::HerdrWindow;
 use crate::editor::EditorTarget;
-use crate::terminal::{PaneLink, RowTarget, pane_link_at};
+use crate::terminal::{PaneLink, RowTarget};
 use gpui::{Context, Pixels, Point};
 use herdr_client::ConnectTarget;
 use std::{
@@ -223,7 +223,7 @@ impl HerdrWindow {
             return None;
         }
         let (x, y) = self.drawn_position(position)?;
-        let link = pane_link_at(
+        let link = self.link_reading().pane_link_at(
             self.live.surface.as_deref()?,
             x,
             y,
