@@ -242,7 +242,7 @@ fn a_link_modifier_click_opens_a_printed_file_that_exists(cx: &mut gpui::TestApp
     cx.run_until_parked();
     view.read_with(cx, |view, _| {
         let link = view.hovered_local_link().unwrap();
-        assert_eq!((link.row, link.columns.clone()), (0, 4..20));
+        assert_eq!(link.rows, vec![(0, 4..20)]);
         assert!(view.terminal_link_hovered(found, Modifiers::secondary_key()));
         assert!(view.link_modifier_held(found, Modifiers::secondary_key()));
     });

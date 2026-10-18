@@ -193,7 +193,7 @@ impl HerdrWindow {
             return None;
         }
         let (x, y) = self.drawn_position(position)?;
-        crate::terminal::link_at(
+        self.link_reading().link_at(
             self.live.surface.as_deref()?,
             x,
             y,
