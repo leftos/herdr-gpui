@@ -120,6 +120,19 @@ fn a_declined_click_opens_the_local_link_that_contains_the_daemons(cx: &mut gpui
 }
 
 #[gpui::test]
+fn a_click_before_the_hover_reply_opens_the_whole_wrapped_link(cx: &mut gpui::TestAppContext) {
+    let mut peer = MockPeer::advertising(&["pane.link.resolve", "pane.link.activate"]);
+    let (view, cx) = window(&peer, true, cx);
+    view.update(cx, |view, _| view.live.surface = Some(showing(&REPLY)));
+    let position = at(&view, cx, 8, 0);
+    // The click comes within the hover's delay, before anything is resolved.
+    cx.simulate_mouse_move(position, None, Modifiers::secondary_key());
+    view.read_with(cx, |view, _| assert!(view.hovered_daemon_link().is_none()));
+    decline(&mut peer, &view, cx, position, DAEMON);
+    assert_eq!(cx.opened_url().as_deref(), Some(LOCAL));
+}
+
+#[gpui::test]
 fn a_declined_click_opens_the_daemons_address_otherwise(cx: &mut gpui::TestAppContext) {
     let mut peer = MockPeer::advertising(&["pane.link.resolve", "pane.link.activate"]);
     let regions = vec![region(0, 6, 19), region(1, 0, 3)];

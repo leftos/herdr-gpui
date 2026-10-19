@@ -15,12 +15,12 @@
 //! reading strictly contains the daemon's, as at an application's word wrap,
 //! the local one is underlined and opened.
 
-use super::{HerdrWindow, RemotePath, file_links::FileLink};
+use super::{HerdrWindow, RemotePath, file_links::FileLink, remote_paths};
 use crate::terminal::PaneLink;
 use crate::{
     browser::WebUrl,
     links::{Activation, LinkCell, LinkInbox, LinkRequest, ResolvedLink},
-    terminal::{ExternalUrl, LinkReading, RowLink, RowTarget},
+    terminal::{ExternalUrl, InputTarget, LinkReading, RowLink, RowTarget, wheel_target},
 };
 use gpui::{Context, Modifiers, Pixels, Point, Task, Window};
 use std::{
@@ -213,10 +213,41 @@ impl HerdrWindow {
         self.links.local.as_ref()
     }
 
-    /// How this client reads plain text on the selected daemon.
-    pub(crate) fn link_reading(&self) -> LinkReading {
+    /// How this client reads plain text on the selected daemon, at the
+    /// `drawn` surface point it is about to read.
+    pub(crate) fn link_reading(&self, drawn: (f32, f32)) -> LinkReading {
         LinkReading {
             raw_url_wraps: !self.live.supports_link_resolve,
+            windows_paths: self.windows_paths_at(drawn),
+        }
+    }
+
+    /// Whether the pane at the `drawn` surface point runs on a host that
+    /// writes Windows paths, judged by its working directory as a file link
+    /// resolves against it; by this machine when no directory is known.
+    fn windows_paths_at(&self, (x, y): (f32, f32)) -> bool {
+        let pane_id = self.live.surface.as_deref().and_then(|surface| {
+            let hit = wheel_target(
+                surface,
+                x,
+                y,
+                self.cell_width,
+                self.config.terminal.line_height(),
+            )?;
+            match hit.target {
+                InputTarget::Pane(id) => Some(id),
+                InputTarget::Popup(_) => None,
+            }
+        });
+        let cwd = pane_id.and_then(|pane_id| {
+            let snapshot = self.live.snapshot.as_ref()?;
+            let pane = snapshot.panes.iter().find(|pane| pane.pane_id == pane_id)?;
+            pane.foreground_cwd.clone().or_else(|| pane.cwd.clone())
+        });
+        match cwd.as_deref() {
+            Some(cwd) if remote_paths::windows(cwd) => true,
+            Some(cwd) if cwd.starts_with('/') => false,
+            _ => cfg!(windows),
         }
     }
 
@@ -243,14 +274,23 @@ impl HerdrWindow {
 
     /// Whether the local reading at `position` strictly contains the
     /// daemon's resolved link there, so a click opens the local target when
-    /// no handler claims it.
+    /// no handler claims it. A click before the hover's answer arrives has
+    /// no resolved link to compare: then a local reading spanning more than
+    /// one row wins. It is an application's word wrap or a raw wrap, and a
+    /// daemon offering `pane.link.resolve` is left every raw-wrapped
+    /// address, so a multi-row address read here is one the daemon reads as
+    /// separate lines. A handler still claims the click first.
     fn local_contains_daemon(&self, position: Point<Pixels>) -> bool {
-        let Some(daemon) = self.hovered_daemon_link() else {
+        let Some(local) = self.local_link_at(position) else {
             return false;
         };
-        let rows: Vec<_> = daemon.frame_rows().collect();
-        self.local_link_at(position)
-            .is_some_and(|local| local.link.strictly_contains(&rows))
+        match self.hovered_daemon_link() {
+            Some(daemon) => {
+                let rows: Vec<_> = daemon.frame_rows().collect();
+                local.link.strictly_contains(&rows)
+            }
+            None => local.link.rows.len() > 1,
+        }
     }
 
     /// The cell at `position` when it lies on the hovered resolved link.
