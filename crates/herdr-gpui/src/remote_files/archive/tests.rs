@@ -282,6 +282,14 @@ fn a_truncated_archive_is_an_error() {
 }
 
 #[test]
+fn a_zip_directory_outside_the_top_is_refused() {
+    let bytes = zip(&[("other/", b""), ("src/a.txt", b"a")]);
+    let (root, result) = run(ArchiveFormat::Zip, &bytes, "src");
+    assert!(matches!(result.unwrap_err(), Error::Top { .. }));
+    assert_eq!(std::fs::read_dir(staging(&root)).unwrap().count(), 0);
+}
+
+#[test]
 fn a_zip_crc_error_surfaces() {
     let mut bytes = {
         let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));

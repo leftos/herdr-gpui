@@ -275,7 +275,14 @@ fn fetch_folder(
     cache::create_private_dirs(&staging)?;
     let cancelled = AtomicBool::new(false);
     let filled = fill(
-        io, remote, cap_bytes, &archive, &staging, &local, &cancelled,
+        io,
+        remote,
+        &probed.top,
+        cap_bytes,
+        &archive,
+        &staging,
+        &local,
+        &cancelled,
     );
     let filled = match filled {
         Ok(filled) => filled,
@@ -295,14 +302,16 @@ fn fetch_folder(
             bytes: probed.bytes,
             fingerprint: probed.fingerprint,
         },
-        links_skipped: filled.links_skipped,
+        links_skipped: filled.links_skipped.saturating_add(probed.links_skipped),
     })
 }
 
-/// Fetches, extracts, and moves the folder into place. Blocking.
+/// Fetches, extracts, and moves the folder into place. `top` is the name the
+/// host's archive entries start with. Blocking.
 fn fill(
     io: &Io,
     remote: &RemotePath,
+    top: &str,
     cap_bytes: u64,
     archive: &Path,
     staging: &Path,
@@ -320,13 +329,7 @@ fn fill(
         other => Error::Fetch(other),
     })?;
     drop(file);
-    let extracted = archive::extract(
-        archive,
-        staging,
-        basename(&remote.path, remote.shell),
-        format_for(remote.shell),
-        cancelled,
-    )?;
+    let extracted = archive::extract(archive, staging, top, format_for(remote.shell), cancelled)?;
     // The archive is no use once unpacked; failing to remove it is not.
     remove_file(archive);
     if local.is_dir() {

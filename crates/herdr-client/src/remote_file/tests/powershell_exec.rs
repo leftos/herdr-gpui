@@ -416,7 +416,12 @@ fn probes(fixture: &Fixture) {
     assert_code(&first, 0);
     let first = parse_probe_output(&first.stdout).unwrap();
     assert_eq!(first.bytes, 5 * 1024, "100 + 5000 bytes rounds up to 5 KiB");
+    assert_eq!(first.top, tree);
     let fingerprint = first.fingerprint.expect("PowerShell always has SHA-256");
+
+    let trailing = fixture.probe(&format!("{}\\", fixture.text(tree)));
+    assert_code(&trailing, 0);
+    assert_eq!(parse_probe_output(&trailing.stdout).unwrap(), first);
 
     let home = fixture.probe(&format!("~\\{tree}"));
     assert_code(&home, 0);
@@ -428,6 +433,15 @@ fn probes(fixture: &Fixture) {
     let again = fixture.probe(&fixture.text(tree));
     assert_code(&again, 0);
     assert_eq!(parse_probe_output(&again.stdout).unwrap(), first);
+
+    std::fs::create_dir(fixture.path(&format!("{tree}/empty"))).unwrap();
+    let empty = fixture.probe(&fixture.text(tree));
+    assert_code(&empty, 0);
+    assert_ne!(
+        parse_probe_output(&empty.stdout).unwrap().fingerprint,
+        Some(fingerprint),
+        "an empty folder changes the fingerprint"
+    );
 
     std::fs::write(fixture.path(&format!("{tree}/added.txt")), b"added").unwrap();
     let changed = fixture.probe(&fixture.text(tree));
@@ -445,8 +459,13 @@ fn probes(fixture: &Fixture) {
 fn archives(fixture: &Fixture) {
     let tree = "it's a tree";
     std::fs::create_dir_all(fixture.path(&format!("{tree}/nested"))).unwrap();
+    std::fs::create_dir(fixture.path(&format!("{tree}/empty"))).unwrap();
     std::fs::write(fixture.path(&format!("{tree}/a.txt")), b"alpha").unwrap();
     std::fs::write(fixture.path(&format!("{tree}/nested/b.bin")), payload(4096)).unwrap();
+
+    let probed = fixture.probe(&fixture.text(tree));
+    assert_code(&probed, 0);
+    let top = parse_probe_output(&probed.stdout).unwrap().top;
 
     let zipped = fixture.archive(&fixture.text(tree), MAX_REMOTE_FILE_BYTES);
     assert_code(&zipped, 0);
@@ -470,9 +489,18 @@ fn archives(fixture: &Fixture) {
         .map(str::to_owned)
         .collect::<Vec<_>>();
     names.sort();
+    assert!(names.contains(&format!("{tree}/empty/")), "{names:?}");
+    for name in &names {
+        assert_eq!(name.split('/').next(), Some(top.as_str()), "{name}");
+    }
     assert_eq!(
         names,
-        vec![format!("{tree}/a.txt"), format!("{tree}/nested/b.bin")]
+        vec![
+            format!("{tree}/a.txt"),
+            format!("{tree}/empty/"),
+            format!("{tree}/nested/"),
+            format!("{tree}/nested/b.bin"),
+        ]
     );
 
     let too_large = fixture.archive(&fixture.text(tree), 64);
@@ -486,7 +514,8 @@ fn archives(fixture: &Fixture) {
 }
 
 /// A reparse point inside the tree is skipped, so a junction that points at
-/// its own parent neither recurses nor changes the size or fingerprint.
+/// its own parent neither recurses nor changes the size or fingerprint, and
+/// the probe counts it as left out.
 #[cfg(windows)]
 #[test]
 fn powershell_probe_skips_junctions() {
@@ -522,7 +551,16 @@ fn powershell_probe_skips_junctions() {
 
         let after = fixture.probe(&fixture.text(tree));
         assert_code(&after, 0);
-        assert_eq!(parse_probe_output(&after.stdout).unwrap(), before);
+        let after = parse_probe_output(&after.stdout).unwrap();
+        assert_eq!(after.bytes, before.bytes, "the junction adds no size");
+        assert_eq!(
+            after.fingerprint, before.fingerprint,
+            "the junction changes no fingerprint"
+        );
+        assert_eq!(
+            after.links_skipped, 1,
+            "the junction is counted as left out"
+        );
     }
 }
 

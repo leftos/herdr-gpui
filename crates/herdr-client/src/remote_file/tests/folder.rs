@@ -32,7 +32,7 @@ fn posix_folder_scripts_expand_only_a_leading_home() {
 }
 
 #[test]
-fn posix_probe_checks_missing_before_not_a_folder_and_prints_two_lines() {
+fn posix_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
     let script = scripts::posix_probe_script("/tree");
     let missing = script
         .find(&format!(
@@ -44,13 +44,30 @@ fn posix_probe_checks_missing_before_not_a_folder_and_prints_two_lines() {
             "if [ ! -d \"$path\" ]; then exit {NOT_A_FILE_EXIT}; fi"
         ))
         .unwrap();
-    assert!(missing < folder);
+    let strip = script
+        .find("while [ \"${path%/}\" != \"$path\" ]; do path=${path%/}; done")
+        .unwrap();
+    let empty = script
+        .find(&format!(
+            "if [ -z \"$path\" ]; then exit {NOT_A_FILE_EXIT}; fi"
+        ))
+        .unwrap();
+    let top = script.find("top=${path##*/}").unwrap();
+    assert!(missing < folder && folder < strip && strip < empty && empty < top);
     let size = script.find("printf '%s\\n' \"$size\"").unwrap();
     let digest = script.find("printf '%s\\n' \"${sum%% *}\"").unwrap();
     let absent = script.find("printf '%s\\n' '-'").unwrap();
+    let printed_top = script.find("printf '%s\\n' \"$top\"").unwrap();
+    let zero = script.rfind("printf '%s\\n' 0").unwrap();
     assert!(folder < size && size < digest && size < absent);
+    assert!(digest < printed_top && absent < printed_top && printed_top < zero);
     assert!(script.contains("du -sk -- \"$path\""));
-    assert!(script.contains("find \"$path\" -exec ls -lnd -- {} + | LC_ALL=C sort | $hasher"));
+    // GNU stat's `%y` carries nanoseconds, BSD's `%m` whole seconds, and
+    // `ls -lnd` is the fallback for a host with neither.
+    let gnu = script.find("stat -c '%n %s %y' -- \"$path\"").unwrap();
+    let bsd = script.find("stat -f '%N %z %m' -- \"$path\"").unwrap();
+    let fallback = script.find("find \"$path\" -exec ls -lnd -- {} +").unwrap();
+    assert!(gnu < bsd && bsd < fallback);
     // The probe picks a hasher without exiting when there is none; the push
     // keeps its own refusal.
     assert!(script.contains("hasher=\nif command -v sha256sum"));
@@ -109,14 +126,20 @@ fn powershell_folder_scripts_quote_the_path_as_a_literal() {
 }
 
 #[test]
-fn powershell_probe_checks_missing_before_not_a_folder_and_prints_two_lines() {
+fn powershell_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
     let script = scripts::powershell_probe_script("C:\\tree");
     let directory = script.find("[System.IO.Directory]::Exists($path)").unwrap();
     let file = script.find("[System.IO.File]::Exists($path)").unwrap();
     let not_a_file = script.find(&format!("exit {NOT_A_FILE_EXIT}")).unwrap();
     let missing = script.find(&format!("exit {MISSING_EXIT}")).unwrap();
     assert!(directory < file && file < not_a_file && not_a_file < missing);
-    assert_eq!(script.matches("Write-Output").count(), 2);
+    assert_eq!(script.matches("Write-Output").count(), 4);
+    assert!(script.contains("$base = [System.IO.Path]::GetFileName($root)"));
+    assert!(script.contains(&format!("if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}")));
+    assert!(script.contains("[int]$skipped = 0"));
+    assert!(script.contains("$skipped++; continue"));
+    assert!(script.contains("FileLength = -1"));
+    assert!(script.contains("Ticks = 0"));
     assert!(script.contains("FileAttributes]::ReparsePoint"));
     assert!(script.contains("Sort-Object Relative"));
     assert!(script.contains("SHA256]::Create()"));
@@ -128,6 +151,12 @@ fn powershell_probe_checks_missing_before_not_a_folder_and_prints_two_lines() {
 fn powershell_archive_builds_a_zip_beside_its_output_bound() {
     let script = scripts::powershell_archive_script("C:\\tree", 42);
     assert!(script.contains("ZipFile]::Open($zip, 'Create')"));
+    assert!(script.contains("$base = [System.IO.Path]::GetFileName($root)"));
+    assert!(script.contains(&format!("if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}")));
+    assert!(
+        script.contains("[void]$archive.CreateEntry($base + '/' + $relative + '/')"),
+        "an empty folder is written as a directory entry"
+    );
     assert!(script.contains(
         "ZipFileExtensions]::CreateEntryFromFile($archive, $item, $base + '/' + $relative)"
     ));
