@@ -75,6 +75,8 @@ pub(crate) struct MenuState {
     pub(super) open_link: Option<crate::terminal::ExternalUrl>,
     /// The copy the remote file questions are about.
     pub(super) remote_file: Option<crate::remote_files::Key>,
+    /// The folder question the window shows.
+    pub(crate) remote_folder: Option<crate::remote_files::FolderPrompt>,
     /// The batch the destroy-cloud-devices question is about. Dropping it
     /// unanswered cancels the batch.
     /// The batch the create-cloud-machines question is about.
@@ -345,6 +347,7 @@ impl MenuState {
             open_checkout: None,
             open_link: None,
             remote_file: None,
+            remote_folder: None,
             #[cfg(feature = "cloud")]
             cloud_create: None,
             #[cfg(feature = "cloud")]
@@ -426,6 +429,7 @@ impl MenuState {
         self.open_checkout = None;
         self.open_link = None;
         self.remote_file = None;
+        self.remote_folder = None;
         #[cfg(feature = "cloud")]
         {
             self.cloud_create = None;

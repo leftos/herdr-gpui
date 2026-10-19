@@ -88,6 +88,8 @@ pub(crate) enum Page {
     /// The title bar's list of paired phones, to disconnect one or pair
     /// another.
     RemoteDevices,
+    /// A remote folder is large or changed, and its copy asks what to do.
+    RemoteFolder,
     /// Asks before a save to a remote file's copy is uploaded.
     RemoteUpload,
     RemoveDevice,

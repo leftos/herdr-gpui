@@ -14,7 +14,9 @@
 //! Every fetch, push, and disk access runs on the background executor; the
 //! UI thread only starts them and applies their results.
 
+mod archive;
 mod cache;
+mod folders;
 mod push;
 mod sync;
 mod uploads;
@@ -22,7 +24,9 @@ mod watch;
 
 use crate::window::{Flash, HerdrWindow, RemotePath};
 use gpui::{App, Context, Task};
-use herdr_client::{Expect, Fetched, MAX_REMOTE_FILE_BYTES, RemoteFileAccess, RemoteShell};
+use herdr_client::{
+    Expect, Fetched, MAX_REMOTE_FILE_BYTES, ProbedFolder, RemoteFileAccess, RemoteShell,
+};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io::{Read, Write},
@@ -35,6 +39,7 @@ use std::{
 };
 
 pub(crate) use cache::{Cache, basename};
+pub(crate) use folders::{FolderPrompt, FolderQuestion};
 pub(crate) use sync::{Answer, Policy, Resolution, SyncState};
 
 /// Bytes in the megabyte that [`Error::TooLarge`] reports.
@@ -46,18 +51,39 @@ pub enum Error {
     // keep-sorted start
     #[error("Could not keep the file's access; nothing was changed.")]
     Access,
+    #[error("Could not write the folder's archive at {}: {source}", path.display())]
+    Archive {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("Could not use the remote file cache at {}: {source}", path.display())]
     Cache {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
+    #[error("Could not unpack the folder: {0}")]
+    Extract(#[from] archive::Error),
     #[error("Could not fetch the file: {0}")]
     Fetch(#[source] herdr_client::Error),
+    #[error(
+        "Could not replace the folder's copy at {}: it may be open in another application",
+        path.display()
+    )]
+    FolderInUse {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("The folder is larger than {} MB, so it was not copied", .limit.div_ceil(MB))]
+    FolderTooLarge { limit: u64 },
     #[error("Could not keep both: every name up to {last} is taken on the host")]
     NamesTaken { last: String },
     #[error("No state folder for the remote file cache: set XDG_STATE_HOME, HOME, or LOCALAPPDATA")]
     NoStateDir,
+    #[error("Could not check the folder: {0}")]
+    Probe(#[source] herdr_client::Error),
     #[error("Could not upload the file: {0}")]
     Push(#[source] herdr_client::Error),
     #[error(
@@ -113,12 +139,26 @@ pub(crate) type Pusher = Arc<
 /// The cache copies are written to. Blocking.
 pub(crate) type CacheSource = Arc<dyn Fn() -> Result<Arc<Cache>> + Send + Sync>;
 
+/// Sizes a host folder without transferring it. Blocking.
+pub(crate) type FolderProber =
+    Arc<dyn Fn(&RemotePath) -> herdr_client::Result<ProbedFolder> + Send + Sync>;
+
+/// Streams the host folder `RemotePath` names to the writer as an archive,
+/// refusing more than the given bytes. Blocking.
+pub(crate) type FolderFetcher = Arc<
+    dyn Fn(&RemotePath, &mut (dyn Write + Send), u64) -> herdr_client::Result<Fetched>
+        + Send
+        + Sync,
+>;
+
 /// The I/O fetches and pushes do: SSH and the process's cache in the app,
 /// and fakes in tests.
 #[derive(Clone)]
 pub(crate) struct Io {
     cache: CacheSource,
     fetch: Fetcher,
+    folder_fetch: FolderFetcher,
+    folder_probe: FolderProber,
     push: Pusher,
     /// Runs at each step of putting a fetched copy in place, with the
     /// copy's path, so a test can save to it then.
@@ -167,6 +207,17 @@ impl Default for Io {
                     &AtomicBool::new(false),
                 )
             }),
+            folder_probe: Arc::new(|remote| {
+                herdr_client::probe_remote_folder(remote.remote_file(), &AtomicBool::new(false))
+            }),
+            folder_fetch: Arc::new(|remote, out, max_bytes| {
+                herdr_client::fetch_remote_folder(
+                    remote.remote_file(),
+                    out,
+                    max_bytes,
+                    &AtomicBool::new(false),
+                )
+            }),
         }
     }
 }
@@ -177,9 +228,20 @@ impl std::fmt::Debug for Io {
     }
 }
 
+/// What a copy holds, and for a folder what the host's probe last found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CopyKind {
+    File,
+    Folder {
+        bytes: u64,
+        fingerprint: Option<[u8; 32]>,
+    },
+}
+
 /// A local copy of a host's file, and where it stands against the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CachedCopy {
+    pub(crate) kind: CopyKind,
     pub(crate) local: PathBuf,
     pub(crate) policy: Policy,
     pub(crate) shell: RemoteShell,
@@ -237,6 +299,8 @@ pub(crate) struct RemoteFiles {
     /// The copies a click's fetch or a conflict's refetch is writing, which
     /// nothing else touches until it is done.
     fetching: HashSet<Key>,
+    /// The folder questions waiting for the window to have no page open.
+    folder_prompts: VecDeque<FolderPrompt>,
     io: Io,
     /// When the last watch run started.
     last_watch: Option<Instant>,
@@ -251,6 +315,17 @@ impl RemoteFiles {
     /// The copy last fetched of `path` on `target`.
     pub(crate) fn copy(&self, target: &str, path: &str) -> Option<&CachedCopy> {
         self.copies.get(&(target.to_owned(), path.to_owned()))
+    }
+
+    /// The folder copy of `path` on `target` and the fingerprint it was
+    /// fetched with, when the copy holds a folder. An in-memory lookup: the
+    /// caller checks the folder is still on disk in the background.
+    pub(crate) fn folder(&self, target: &str, path: &str) -> Option<(PathBuf, Option<[u8; 32]>)> {
+        let copy = self.copy(target, path)?;
+        match copy.kind {
+            CopyKind::File => None,
+            CopyKind::Folder { fingerprint, .. } => Some((copy.local.clone(), fingerprint)),
+        }
     }
 
     /// Every copy, with where it stands against its host.
@@ -278,6 +353,29 @@ impl RemoteFiles {
     fn record(&mut self, done: Done) {
         self.cache = Some(done.cache);
         let mut copy = done.copy;
+        if let Some(earlier) = self.copies.get(&done.key) {
+            copy.policy = earlier.policy;
+        }
+        self.copies.insert(done.key, copy);
+    }
+
+    /// Keeps a fetched folder copy, with the upload policy an earlier copy of
+    /// the same path had.
+    pub(crate) fn record_folder(&mut self, done: FolderDone) {
+        self.cache = Some(done.cache);
+        let mut copy = CachedCopy {
+            local: done.local,
+            kind: CopyKind::Folder {
+                bytes: done.bytes,
+                fingerprint: done.fingerprint,
+            },
+            policy: Policy::default(),
+            shell: done.shell,
+            state: SyncState::Synced,
+            synced_meta: done.meta,
+            synced_sha256: [0; 32],
+            watch: watch::Watch::default(),
+        };
         if let Some(earlier) = self.copies.get(&done.key) {
             copy.policy = earlier.policy;
         }
@@ -377,6 +475,7 @@ impl RemoteFiles {
     fn probes(&self) -> Vec<watch::Probe> {
         self.copies
             .iter()
+            .filter(|(_, copy)| matches!(copy.kind, CopyKind::File))
             .filter(|(key, copy)| !transferring(copy.state) && !self.fetching.contains(*key))
             .map(|(key, copy)| watch::Probe {
                 key: key.clone(),
@@ -427,6 +526,7 @@ impl RemoteFiles {
     /// every window of the process shares, off the UI thread.
     pub(crate) fn remove_copies(&mut self, cx: &App) -> Task<()> {
         self.copies.clear();
+        self.folder_prompts.clear();
         self.prompts.clear();
         let cache = self.cache.take();
         cx.background_executor().spawn(async move {
@@ -485,6 +585,19 @@ enum Fetch {
     KeptEdits,
 }
 
+/// A finished folder fetch: where the copy is, and what the probe found.
+pub(crate) struct FolderDone {
+    key: Key,
+    cache: Arc<Cache>,
+    local: PathBuf,
+    shell: RemoteShell,
+    /// The extracted folder's metadata, which stands in for the synced
+    /// metadata a file copy has.
+    meta: watch::Meta,
+    bytes: u64,
+    fingerprint: Option<[u8; 32]>,
+}
+
 /// Fetches `remote` into `owner`'s copy of it in the cache: written beside
 /// it first and put in its place once whole, so a failed fetch leaves any
 /// older copy as it was. With `keep_edits_since`, the copy's metadata when
@@ -536,6 +649,7 @@ fn fetch_copy(
         key: (remote.target.clone(), remote.path.clone()),
         copy: CachedCopy {
             local,
+            kind: CopyKind::File,
             policy: Policy::default(),
             shell: remote.shell,
             state: SyncState::Synced,
@@ -573,6 +687,11 @@ enum Placed {
 fn replace(io: &Io, part: &Path, local: &Path) -> Result<Placed> {
     #[cfg(not(test))]
     let _ = io;
+    // A folder copy of the same path, before the host's path became a file.
+    // Reached only when there are no edits to keep.
+    if local.is_dir() {
+        std::fs::remove_dir_all(local).map_err(|source| cache_error(local, source))?;
+    }
     std::fs::rename(part, local).map_err(|source| cache_error(local, source))?;
     #[cfg(test)]
     (io.step)(Step::Placed, local);
@@ -724,6 +843,15 @@ impl HerdrWindow {
         query: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        // A folder copy goes to its probe, never through a file fetch.
+        if self
+            .remote_files
+            .folder(&remote.target, &remote.path)
+            .is_some()
+        {
+            self.open_remote_folder(remote, cx);
+            return;
+        }
         if !self.remote_files.fetch_again(&remote) {
             let shown = self.shown_remote_file_prompt();
             let key = (remote.target.clone(), remote.path.clone());
@@ -750,6 +878,7 @@ impl HerdrWindow {
             .copy(&remote.target, &remote.path)
             .map(|copy| copy.synced_meta);
         let page_query = query.clone();
+        let completion = remote.clone();
         let fetch = cx
             .background_executor()
             .spawn(async move { fetch_copy(&io, owner, &remote, synced, page_query.as_deref()) });
@@ -757,7 +886,7 @@ impl HerdrWindow {
             let fetched = fetch.await;
             // The window may have closed meanwhile; nothing opens then.
             let _ = this.update(cx, |this, cx| {
-                this.remote_file_fetched(&key, query, fetched, cx)
+                this.remote_file_fetched(&key, completion, query, fetched, cx)
             });
         })
         .detach();
@@ -766,6 +895,7 @@ impl HerdrWindow {
     fn remote_file_fetched(
         &mut self,
         key: &Key,
+        remote: RemotePath,
         query: Option<String>,
         fetched: Result<Fetch>,
         cx: &mut Context<Self>,
@@ -786,6 +916,17 @@ impl HerdrWindow {
                     Some(url) => self.open_file_url(url, cx),
                     None => tracing::warn!("Fetched remote file copy could not be opened"),
                 }
+            }
+            // The host's path is a folder, so the click becomes a folder copy.
+            Err(error)
+                if matches!(
+                    &error,
+                    Error::Fetch(herdr_client::Error::RemoteFile(
+                        herdr_client::RemoteFileError::NotAFile
+                    ))
+                ) =>
+            {
+                self.open_remote_folder(remote, cx);
             }
             Err(error) => {
                 tracing::warn!(%error, "Remote file not fetched");

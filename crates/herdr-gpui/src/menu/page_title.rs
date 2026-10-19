@@ -81,6 +81,7 @@ impl Page {
             Self::RemoteConflict => "Remote file changed",
             Self::RemoteControl => "Remote control",
             Self::RemoteDevices => "Remote control phones",
+            Self::RemoteFolder => "Copy remote folder",
             Self::RemoteUpload => "Upload changes",
             Self::RemoveDevice => "Remove device",
             Self::RemoveWsl => "Remove WSL distribution",
