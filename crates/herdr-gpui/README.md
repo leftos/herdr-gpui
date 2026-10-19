@@ -2254,6 +2254,13 @@ wrapped itself. Text that runs to the end of the pane's bottom row, or ends
 in `…`, is not read as a link, since it may be cut off. Paths in panes on SSH
 hosts name that host's files; see [Files on SSH Hosts](#files-on-ssh-hosts).
 
+A printed path or a `file://` link may end in a `?query` or `#fragment`, as
+in `index.html?sheet=1`; the file is looked for without it. A web page, a
+PDF, or a file with no extension then opens in your default browser with it;
+other files open as before, without it. On Linux, and on macOS when Safari is
+the default browser, the system opener opens the page without the query. A
+printed path's `#L10` names the line a file opens at in the editor.
+
 A file opens in your terminal editor at the printed line, in a new pane split
 to the right of the pane that printed it (see [Code Navigation](#code-navigation)).
 Folders, images, videos, and PDFs open with the system's default application

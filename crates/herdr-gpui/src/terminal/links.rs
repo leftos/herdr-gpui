@@ -34,21 +34,26 @@ const MAX_PATH_BYTES: usize = 4096;
 /// file a `file://` address or a target without a scheme names, or an
 /// address with another scheme. Nothing here asks whether the file exists.
 fn explicit_target(destination: &str) -> RowTarget {
-    let named = |path: String| RowTarget::Path {
+    let named = |path: String, query: Option<String>| RowTarget::Path {
         path,
         line: None,
+        query,
         explicit: true,
     };
     let url = match url::Url::parse(destination) {
         Ok(url) => url,
         // No scheme: a path as a program would print it, with `~/` and
-        // relative paths left for the click to resolve.
+        // relative paths left for the click to resolve, and a page's query
+        // split off as printed text's is.
         Err(url::ParseError::RelativeUrlWithoutBase)
-            if !destination.is_empty()
-                && destination.len() <= MAX_PATH_BYTES
-                && !destination.chars().any(char::is_control) =>
+            if !destination.is_empty() && !destination.chars().any(char::is_control) =>
         {
-            return named(destination.to_owned());
+            return match path::split_suffix(destination, path::drive_path(destination)) {
+                Some((path, query)) if path.len() <= MAX_PATH_BYTES => {
+                    named(path.to_owned(), query.map(str::to_owned))
+                }
+                _ => RowTarget::Malformed,
+            };
         }
         Err(_) => return RowTarget::Malformed,
     };
@@ -65,10 +70,32 @@ fn explicit_target(destination: &str) -> RowTarget {
     {
         return RowTarget::OtherHost(host.to_owned());
     }
+    let query = file_suffix(&url);
+    if query
+        .as_ref()
+        .is_some_and(|query| query.len() > path::MAX_SUFFIX_BYTES)
+    {
+        return RowTarget::Malformed;
+    }
     url.to_file_path()
         .ok()
         .and_then(|path| path.into_os_string().into_string().ok())
-        .map_or(RowTarget::Malformed, named)
+        .map_or(RowTarget::Malformed, |path| named(path, query))
+}
+
+/// The `?query` and `#fragment` a `file://` address ends in, as the address
+/// serializes them, already percent-encoded. An empty one names nothing.
+fn file_suffix(url: &url::Url) -> Option<String> {
+    let mut suffix = String::new();
+    if let Some(query) = url.query().filter(|query| !query.is_empty()) {
+        suffix.push('?');
+        suffix.push_str(query);
+    }
+    if let Some(fragment) = url.fragment().filter(|fragment| !fragment.is_empty()) {
+        suffix.push('#');
+        suffix.push_str(fragment);
+    }
+    (!suffix.is_empty()).then_some(suffix)
 }
 
 /// What an address read from plain text points at. Only the defined schemes
@@ -80,11 +107,14 @@ fn plain_address(text: &str) -> Option<RowTarget> {
     }
     match explicit_target(text) {
         RowTarget::External(url) if url.trusted() => Some(RowTarget::External(url)),
-        RowTarget::Path { path, .. } if text.starts_with("file://") => Some(RowTarget::Path {
-            path,
-            line: None,
-            explicit: false,
-        }),
+        RowTarget::Path { path, query, .. } if text.starts_with("file://") => {
+            Some(RowTarget::Path {
+                path,
+                line: None,
+                query,
+                explicit: false,
+            })
+        }
         _ => None,
     }
 }
@@ -96,11 +126,15 @@ pub(crate) enum RowTarget {
     Web(String),
     /// A local path as the pane printed it, with `~/` and relative paths left
     /// for the click to resolve, or the path an explicit hyperlink names, and
-    /// the line a `:line` suffix named. An `explicit` one is a link whether
-    /// or not its file exists; printed text is one only when it does.
+    /// the line a `:line` suffix or a `#L10` fragment named. An `explicit`
+    /// one is a link whether or not its file exists; printed text is one only
+    /// when it does.
     Path {
         path: String,
         line: Option<u32>,
+        /// The `?query` or `#fragment` a page's address ends in, with its
+        /// `?` or `#`, which a page opened in the default browser keeps.
+        query: Option<String>,
         explicit: bool,
     },
     /// An explicit hyperlink to a file on another host, by that host's name.
@@ -305,6 +339,7 @@ impl LinkReading {
                 let target = RowTarget::Path {
                     path: found.path.into_owned(),
                     line: found.line,
+                    query: found.query.map(str::to_owned),
                     explicit: false,
                 };
                 (found.range, found.open, target)

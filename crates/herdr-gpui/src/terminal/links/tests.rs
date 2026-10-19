@@ -360,4 +360,5 @@ mod drive_paths;
 mod escaped_paths;
 mod external;
 mod paths;
+mod queries;
 mod wraps;

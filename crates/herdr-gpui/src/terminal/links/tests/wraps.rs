@@ -33,6 +33,7 @@ fn file(path: &str, line: Option<u32>, rows: &[(u16, Range<u16>)]) -> Option<(Ro
     let target = RowTarget::Path {
         path: path.into(),
         line,
+        query: None,
         explicit: false,
     };
     Some((target, rows.to_vec()))

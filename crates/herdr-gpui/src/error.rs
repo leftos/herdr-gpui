@@ -178,6 +178,8 @@ pub enum Error {
     #[cfg(feature = "daytona")]
     #[error(transparent)]
     Daytona(#[from] crate::daytona::Error),
+    #[error(transparent)]
+    DefaultBrowser(#[from] crate::default_browser::Error),
     #[error("Checkout lookup failed. Dismiss and reopen the menu.")]
     DeletionLookup,
     #[error("HEAD is detached. Check a branch out first.")]
