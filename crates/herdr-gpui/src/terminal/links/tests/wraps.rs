@@ -6,6 +6,7 @@ use super::*;
 /// wrapping raw onto the next row to it.
 const RESOLVED: LinkReading = LinkReading {
     raw_url_wraps: false,
+    windows_paths: false,
 };
 
 type Rows = Vec<(u16, Range<u16>)>;

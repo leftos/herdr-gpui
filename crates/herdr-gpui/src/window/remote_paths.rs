@@ -89,7 +89,7 @@ fn resolve(path: &str, cwd: Option<&str>) -> Option<(RemoteShell, String)> {
 
 /// Whether `path` starts with a drive and a separator, as in `C:\` or `c:/`,
 /// or is a UNC path such as `\\server\share`.
-fn windows(path: &str) -> bool {
+pub(super) fn windows(path: &str) -> bool {
     path.starts_with(r"\\")
         || matches!(path.as_bytes(), [letter, b':', b'\\' | b'/', ..] if letter.is_ascii_alphabetic())
 }

@@ -40,6 +40,7 @@ fn rows(lines: &[&str], width: u16) -> FrameData {
 /// joins a raw wrap too.
 const JOINED: LinkReading = LinkReading {
     raw_url_wraps: true,
+    windows_paths: false,
 };
 
 fn link_at(surface: &PaneSurfaceFrame, x: f32, y: f32, w: f32, h: f32) -> Option<String> {
