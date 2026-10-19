@@ -28,6 +28,7 @@ mod notifications;
 mod omarchy;
 mod padding;
 pub(crate) mod preferences;
+mod remote_files;
 pub(crate) mod sidebar;
 mod sidebar_style;
 pub(crate) mod status_bar;
@@ -74,6 +75,8 @@ pub use notifications::{
 use notifications::{ClipboardToastSettings, NotificationSettings};
 pub use padding::Padding;
 pub(crate) use padding::{Axis, MAX_PADDING, Side, Sides};
+pub use remote_files::RemoteFilesConfig;
+use remote_files::RemoteFilesSettings;
 use serde::Deserialize;
 pub(crate) use sidebar::{
     AgentLayout, AgentToken, MAX_ROWS as MAX_SIDEBAR_ROWS, Rows, SidebarConfigError, SidebarLayout,
@@ -176,6 +179,8 @@ pub struct Config {
     /// The `[pane_keys]` table `keybindings` was built from, for the same
     /// reason.
     pub(crate) pane_keys: PaneKeys,
+    /// Size limits for copying a folder printed in an SSH pane.
+    pub remote_files: RemoteFilesConfig,
     /// Whether a linked worktree whose pull request is merged is removed, and
     /// its workspace closed, without asking. The focused workspace still asks.
     pub remove_merged_worktrees: bool,
@@ -440,6 +445,7 @@ impl Default for Config {
             option_as_alt: OptionAsAlt::default(),
             palette: crate::palette::PaletteConfig::default(),
             pane_keys: PaneKeys::new(),
+            remote_files: RemoteFilesConfig::default(),
             remove_merged_worktrees: false,
             show_agents: true,
             show_device_icons: true,
@@ -504,6 +510,7 @@ struct Settings {
     option_as_alt: OptionAsAlt,
     palette: crate::palette::PaletteConfig,
     pane_keys: PaneKeys,
+    remote_files: RemoteFilesSettings,
     remove_merged_worktrees: Option<bool>,
     show_agents: Option<bool>,
     show_device_icons: Option<bool>,
@@ -866,6 +873,12 @@ impl Config {
         config.notifications = settings
             .notifications
             .resolve(NotificationConfig::default());
+        config.remote_files = settings.remote_files.resolve(RemoteFilesConfig::default());
+        if !config.remote_files.valid() {
+            return Err(Error::Toml(serde::de::Error::custom(
+                "remote_files.folder_warning_mb must not exceed remote_files.folder_transfer_cap_mb",
+            )));
+        }
         config.clipboard_overrides = settings.clipboard_toast;
         config.clipboard_toast = settings.clipboard_toast.resolve(base.clipboard_toast);
         config.bell = settings.bell;

@@ -290,6 +290,18 @@ pub(super) const CATALOG: &[Entry] = &[
         "Install beta releases",
         "Betas ship before they are promoted to stable. Turning this off never downgrades; Homebrew installations always follow stable.",
     ),
+    entry(
+        Section::General,
+        "general-folder-warning",
+        "Warn above",
+        "Before copying a folder printed in an SSH pane, when its contents are larger than this.",
+    ),
+    entry(
+        Section::General,
+        "general-folder-cap",
+        "Refuse above",
+        "A folder archive larger than this is not copied.",
+    ),
     entry(Section::Tabs, "tabs-position", "Position", ""),
     entry(
         Section::Tabs,
