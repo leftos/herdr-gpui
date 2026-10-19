@@ -14,9 +14,32 @@ fn not_a_file() -> herdr_client::Result<&'static [u8]> {
     Err(herdr_client::Error::RemoteFile(RemoteFileError::NotAFile))
 }
 
-/// A tree `bytes` large with fingerprint `fingerprint`.
+/// A tree `bytes` large with fingerprint `fingerprint`, archived under `src`.
 fn sized(bytes: u64, fingerprint: Option<[u8; 32]>) -> herdr_client::Result<ProbedFolder> {
-    Ok(ProbedFolder { bytes, fingerprint })
+    Ok(ProbedFolder {
+        bytes,
+        fingerprint,
+        top: "src".into(),
+        links_skipped: 0,
+    })
+}
+
+/// A tree whose host archive leaves `count` links out.
+fn with_links(count: u32) -> herdr_client::Result<ProbedFolder> {
+    Ok(ProbedFolder {
+        bytes: 4096,
+        fingerprint: Some([7; 32]),
+        top: "src".into(),
+        links_skipped: count,
+    })
+}
+
+fn two_links_skipped() -> herdr_client::Result<ProbedFolder> {
+    with_links(2)
+}
+
+fn one_link_skipped() -> herdr_client::Result<ProbedFolder> {
+    with_links(1)
 }
 
 fn probed() -> herdr_client::Result<ProbedFolder> {
@@ -328,6 +351,42 @@ fn links_the_extraction_skipped_are_counted_and_flashed(cx: &mut TestAppContext)
         .unwrap();
     assert_eq!(std::fs::read(local.join("notes.md")).unwrap(), b"note");
     assert!(!local.join("link").exists(), "no link is created");
+}
+
+#[gpui::test]
+fn a_click_on_a_path_with_a_trailing_separator_opens_the_copy(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = folder_window(&host, 64, cx);
+    host.serve_archive(&zip_of(&[("src/notes.md", b"notes")]));
+    click(&view, cx, "/home/me/src/");
+    let (local, _) = view
+        .read_with(cx, |view, _| {
+            view.remote_files.folder("me@devbox", "/home/me/src/")
+        })
+        .expect("the folder is copied");
+    assert_eq!(local.file_name().unwrap(), "src");
+    let opened = cx.opened_url().expect("the copy's folder opens");
+    let expected = url::Url::from_file_path(&local).unwrap();
+    assert_eq!(opened, expected.as_str());
+}
+
+#[gpui::test]
+fn links_the_host_skipped_are_counted_and_flashed(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = folder_window(&host, 64, cx);
+    host.serve_archive(&zip_of(&[("src/notes.md", b"notes")]));
+    view.update(cx, |_, _| host.answer_probes(&[two_links_skipped]));
+    click(&view, cx, PATH);
+    let text = flash_text(&view, cx).expect("the host's skipped links are reported");
+    assert_eq!(text, "2 links were skipped");
+
+    let single = FakeHost::new();
+    let (view, cx) = folder_window(&single, 64, cx);
+    single.serve_archive(&zip_of(&[("src/notes.md", b"notes")]));
+    view.update(cx, |_, _| single.answer_probes(&[one_link_skipped]));
+    click(&view, cx, PATH);
+    let text = flash_text(&view, cx).expect("the host's skipped link is reported");
+    assert_eq!(text, "1 link was skipped");
 }
 
 #[gpui::test]

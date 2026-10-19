@@ -138,15 +138,16 @@ pub(crate) fn shared() -> Result<Arc<Cache>> {
     Ok(cache)
 }
 
-/// The last segment of a host's path, split at the separators of the host's
-/// `shell`, or `file` when that is no plain file name. A backslash is a
-/// plain name character on a POSIX host.
+/// The last segment of a host's path, after any trailing separators of the
+/// host's `shell`, split at those separators; `file` when that is no plain
+/// file name. A backslash is a plain name character on a POSIX host.
 pub(crate) fn basename(path: &str, shell: RemoteShell) -> &str {
     let separators: &[char] = match shell {
         RemoteShell::Posix => &['/'],
         RemoteShell::PowerShell => &['/', '\\'],
     };
-    let name = path.rsplit(separators).next().unwrap_or_default();
+    let trimmed = path.trim_end_matches(separators);
+    let name = trimmed.rsplit(separators).next().unwrap_or_default();
     if matches!(name, "" | "." | "..") || name.chars().any(char::is_control) {
         FALLBACK_NAME
     } else {

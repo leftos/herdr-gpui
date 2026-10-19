@@ -71,10 +71,14 @@ pub(crate) type ProbeReply = fn() -> herdr_client::Result<ProbedFolder>;
 pub(crate) type FetchReply = fn() -> herdr_client::Result<&'static [u8]>;
 
 /// What a probe finds when a test sets no answer.
-pub(crate) const PROBED: ProbedFolder = ProbedFolder {
-    bytes: 4096,
-    fingerprint: Some([7; 32]),
-};
+pub(crate) fn probed_folder() -> ProbedFolder {
+    ProbedFolder {
+        bytes: 4096,
+        fingerprint: Some([7; 32]),
+        top: "src".into(),
+        links_skipped: 0,
+    }
+}
 
 /// An SSH host whose answers a test chooses, the fetches and pushes asked
 /// of it, and a cache of its own in a temporary folder.
@@ -90,7 +94,7 @@ pub(crate) struct FakeHost {
     /// reply it was made with.
     file_replies: Arc<Mutex<VecDeque<FetchReply>>>,
     /// Answers for the next probes, in order; a probe past them finds
-    /// [`PROBED`].
+    /// [`probed_folder`].
     probe_replies: Arc<Mutex<VecDeque<ProbeReply>>>,
     probes_asked: Arc<Mutex<Vec<RemotePath>>>,
     /// Answers for the next pushes, in order; a push past them succeeds.
@@ -136,7 +140,7 @@ impl FakeHost {
             folder_probe: Arc::new(move |remote| {
                 probes_asked.lock().unwrap().push(remote.clone());
                 let reply = probe_replies.lock().unwrap().pop_front();
-                reply.map_or(Ok(PROBED), |reply| reply())
+                reply.map_or(Ok(probed_folder()), |reply| reply())
             }),
             folder_fetch: Arc::new(move |remote, out, max_bytes| {
                 archives_asked.lock().unwrap().push(remote.clone());
@@ -285,15 +289,10 @@ fn a_copy_is_named_after_the_host_s_file() {
     assert_eq!(basename("/home/me/src/main.rs", windows), "main.rs");
     assert_eq!(basename(r"~\a/b\Makefile", windows), "Makefile");
     assert_eq!(basename("README", posix), "README");
-    for odd in [
-        "/home/me/",
-        r"C:\dev\",
-        "/a/.",
-        "/a/..",
-        "",
-        "/a/b\u{7}c",
-        "~",
-    ] {
+    assert_eq!(basename("/home/me/", posix), "me");
+    assert_eq!(basename(r"C:\dev\", windows), "dev");
+    assert_eq!(basename("/", posix), "file");
+    for odd in ["/a/.", "/a/..", "", "/a/b\u{7}c", "~"] {
         let expected = if odd == "~" { "~" } else { "file" };
         assert_eq!(basename(odd, windows), expected, "{odd:?}");
     }
@@ -308,7 +307,7 @@ fn a_copy_s_name_splits_at_the_host_s_own_separators() {
     );
     assert_eq!(basename(r"C:\a\b.txt", RemoteShell::PowerShell), "b.txt");
     assert_eq!(basename("/srv/foo\\", RemoteShell::Posix), "foo\\");
-    assert_eq!(basename("/srv/foo\\", RemoteShell::PowerShell), "file");
+    assert_eq!(basename("/srv/foo\\", RemoteShell::PowerShell), "foo");
 }
 
 #[test]
