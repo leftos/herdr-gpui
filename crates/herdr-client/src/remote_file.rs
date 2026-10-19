@@ -64,6 +64,7 @@ use std::{
     time::Duration,
 };
 
+mod folder;
 mod posix;
 mod powershell;
 
@@ -76,6 +77,11 @@ pub const MAX_REMOTE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Longest interval without progress on any of the child's streams.
 const IDLE: Duration = Duration::from_secs(30);
+
+/// Longest interval without progress while a host builds a folder archive.
+/// The PowerShell script writes nothing to stdout until the zip is complete,
+/// and the runner's idle timer resets only on a stream's progress.
+const ARCHIVE_IDLE: Duration = Duration::from_secs(120);
 
 /// The path is a symbolic link (or, on Windows, another reparse point), which
 /// a push never replaces.
@@ -147,6 +153,17 @@ pub struct Fetched {
     pub sha256: [u8; 32],
 }
 
+/// A host folder's uncompressed size and a fingerprint of its tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProbedFolder {
+    /// The tree's size in bytes, rounded up to KiB: a POSIX host's `du` counts
+    /// allocated blocks, and a Windows host sums file lengths.
+    pub bytes: u64,
+    /// SHA-256 of a sorted metadata listing of every entry, or `None` when
+    /// the host has no SHA-256 tool.
+    pub fingerprint: Option<[u8; 32]>,
+}
+
 /// Why a fetch or push failed.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -155,6 +172,8 @@ pub enum Error {
     Access,
     #[error("the host's file changed since it was fetched")]
     Conflict,
+    #[error("the host's folder probe answered badly")]
+    FolderProbe,
     #[error("the upload was cut off; the host's file is unchanged")]
     Incomplete,
     #[error("the file is not on the host")]
@@ -163,6 +182,8 @@ pub enum Error {
     NoHasher,
     #[error("the host's path is not a regular file")]
     NotAFile,
+    #[error("the host's path is not a folder")]
+    NotAFolder,
     #[error("could not reach the host's file: {0}")]
     /// Boxed: the crate's root error holds this enum in turn.
     Script(#[source] Box<crate::Error>),
@@ -221,6 +242,72 @@ pub fn fetch_remote_file(
     Ok(fetch_with(command, out, max_bytes, cancelled)?)
 }
 
+/// Probe `folder` without transferring it: its uncompressed size and a
+/// fingerprint of its tree. Blocking: call only on a background worker.
+///
+/// Args:
+///     folder: The host, its shell, and the folder to probe.
+///     cancelled: Kills the probe when set.
+///
+/// Returns:
+///     The folder's size in bytes, rounded up to KiB, and a SHA-256 over its
+///     sorted metadata listing when the host has a SHA-256 tool.
+///
+/// Errors:
+///     [`crate::Error::RemoteFile`] for a missing path ([`Error::Missing`]),
+///     a path that is not a folder ([`Error::NotAFolder`]), or an answer that
+///     is not two valid lines ([`Error::FolderProbe`]), or a target or
+///     platform error from [`crate::Error`].
+pub fn probe_remote_folder(folder: RemoteFile<'_>, cancelled: &AtomicBool) -> Result<ProbedFolder> {
+    let script = match folder.shell {
+        RemoteShell::Posix => folder::posix_probe_script(folder.path),
+        RemoteShell::PowerShell => folder::powershell_probe_script(folder.path),
+    };
+    let command = remote_command(folder.target, folder.shell, &script)?;
+    Ok(probe_with(command, cancelled)?)
+}
+
+/// Stream `folder` to `out` as an archive: gzipped tar for
+/// [`RemoteShell::Posix`], a zip for [`RemoteShell::PowerShell`]. Blocking:
+/// call only on a background worker.
+///
+/// The archive's entries start with the folder's own name, which the
+/// extractor checks and strips.
+///
+/// Args:
+///     folder: The host, its shell, and the folder to send. Its name must not
+///         be empty.
+///     out: Receives the archive's bytes. On failure it may hold a prefix.
+///     max_bytes: The largest archive accepted.
+///     cancelled: Kills the transfer when set.
+///
+/// Returns:
+///     The byte count and SHA-256 of what was written to `out`.
+///
+/// Errors:
+///     [`crate::Error::RemoteFile`] for a missing path
+///     ([`Error::Missing`]), a path that is not a folder
+///     ([`Error::NotAFolder`]), an archive over `max_bytes`
+///     ([`Error::TooLarge`]), or a failed script, or a target or platform
+///     error from [`crate::Error`].
+pub fn fetch_remote_folder(
+    folder: RemoteFile<'_>,
+    out: impl Write + Send,
+    max_bytes: u64,
+    cancelled: &AtomicBool,
+) -> Result<Fetched> {
+    let script = match folder.shell {
+        RemoteShell::Posix => folder::posix_archive_script(folder.path),
+        RemoteShell::PowerShell => folder::powershell_archive_script(folder.path, max_bytes),
+    };
+    let command = remote_command(folder.target, folder.shell, &script)?;
+    let limits = ScriptLimits {
+        output: max_bytes,
+        idle: ARCHIVE_IDLE,
+    };
+    Ok(fetch_with_limits(command, out, limits, cancelled)?)
+}
+
 /// Replace `file` with `input`, only while the host's file still meets
 /// `expect`. A symbolic link or non-regular file at the path is never
 /// replaced, and the temporary file is removed on every failure.
@@ -277,20 +364,106 @@ fn fetch_with(
     max_bytes: u64,
     cancelled: &AtomicBool,
 ) -> std::result::Result<Fetched, Error> {
-    let mut hashing = Hashing {
-        out,
-        hasher: Sha256::new(),
-    };
     let limits = ScriptLimits {
         output: max_bytes,
         idle: IDLE,
     };
+    fetch_with_limits(command, out, limits, cancelled)
+}
+
+/// Run a prepared fetch-like command under `limits`, hashing its stdout on
+/// the way to `out`.
+fn fetch_with_limits(
+    command: Command,
+    out: impl Write + Send,
+    limits: ScriptLimits,
+    cancelled: &AtomicBool,
+) -> std::result::Result<Fetched, Error> {
+    let mut hashing = Hashing {
+        out,
+        hasher: Sha256::new(),
+    };
     let bytes = run_script_command(command, io::empty(), &mut hashing, limits, cancelled)
-        .map_err(|error| classify(error, Some(max_bytes)))?;
+        .map_err(|error| classify(error, Some(limits.output)))?;
     Ok(Fetched {
         bytes,
         sha256: hashing.hasher.finalize().into(),
     })
+}
+
+/// Run a prepared probe command and parse its two-line answer.
+fn probe_with(
+    command: Command,
+    cancelled: &AtomicBool,
+) -> std::result::Result<ProbedFolder, Error> {
+    let mut answer = Vec::new();
+    let limits = ScriptLimits {
+        output: 4096,
+        idle: IDLE,
+    };
+    run_script_command(command, io::empty(), &mut answer, limits, cancelled)
+        .map_err(classify_probe)?;
+    parse_probe_output(&answer)
+}
+
+/// The typed refusal for a probe's exit code. A probe shares the file
+/// scripts' missing and non-folder codes; every other failure is a script
+/// failure.
+fn classify_probe(error: crate::Error) -> Error {
+    let code = match &error {
+        crate::Error::ScriptExit { status, .. } => status.code(),
+        _ => None,
+    };
+    match code {
+        Some(MISSING_EXIT) => Error::Missing,
+        Some(NOT_A_FILE_EXIT) => Error::NotAFolder,
+        _ => Error::Script(Box::new(error)),
+    }
+}
+
+/// Parse the probe's answer: a decimal KiB count, then `-` or a lowercase
+/// SHA-256, each on its own line.
+fn parse_probe_output(bytes: &[u8]) -> std::result::Result<ProbedFolder, Error> {
+    let text = std::str::from_utf8(bytes).map_err(|_| Error::FolderProbe)?;
+    let mut lines = text.lines();
+    let kib = lines.next().ok_or(Error::FolderProbe)?;
+    let sum = lines.next().ok_or(Error::FolderProbe)?;
+    if lines.next().is_some() {
+        return Err(Error::FolderProbe);
+    }
+    let kib = parse_kib(kib)?;
+    Ok(ProbedFolder {
+        bytes: kib.checked_mul(1024).ok_or(Error::FolderProbe)?,
+        fingerprint: parse_fingerprint(sum)?,
+    })
+}
+
+/// A decimal KiB count: digits only, so a sign or padding is a bad answer.
+fn parse_kib(line: &str) -> std::result::Result<u64, Error> {
+    if line.is_empty() || !line.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::FolderProbe);
+    }
+    line.parse().map_err(|_| Error::FolderProbe)
+}
+
+/// `-`, or exactly 64 lowercase hex characters.
+fn parse_fingerprint(line: &str) -> std::result::Result<Option<[u8; 32]>, Error> {
+    if line == "-" {
+        return Ok(None);
+    }
+    let hexadecimal = line.len() == 64
+        && line
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if !hexadecimal {
+        return Err(Error::FolderProbe);
+    }
+    let mut digest = [0u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&line[index * 2..index * 2 + 2], 16)
+            .map_err(|_| Error::FolderProbe)?;
+    }
+    Ok(Some(digest))
 }
 
 /// Run a prepared push command with `input` on its stdin. The script prints
