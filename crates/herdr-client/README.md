@@ -654,6 +654,28 @@ Refusals map to `RemoteFileError` variants (`Missing`, `NotAFile`,
 when the file's access cannot be kept, before the host's file changes);
 anything else is `Script`.
 
+### A Folder as an Archive
+
+```text
+probe_remote_folder(folder: RemoteFile, cancelled: &AtomicBool) -> Result<ProbedFolder>
+fetch_remote_folder(folder: RemoteFile, out: impl Write, max_bytes: u64,
+                    cancelled: &AtomicBool) -> Result<Fetched>
+```
+
+These size a host folder without transferring it and stream the folder as one
+archive, for the GUI's folder links. `probe_remote_folder` returns the tree's
+uncompressed size, rounded up to KiB, and a SHA-256 over a sorted metadata
+listing of every entry when the host has a SHA-256 tool, or `None` when it has
+none. It runs the same shells and quoting as a file fetch; `NotAFolder` means
+the path is a file now.
+
+`fetch_remote_folder` writes a gzipped tar stream on a POSIX host and a zip on
+a Windows OpenSSH host. Every archive entry starts with the folder's own name,
+which the caller checks and strips. The archive is refused once it passes
+`max_bytes` (`TooLarge`), and a refused or failed archive may leave a prefix in
+`out`. Its idle timeout is 120 seconds rather than the file transfer's 30: a
+Windows host builds the zip before sending any of it.
+
 ## Local Discovery
 
 `Local` checks `HERDR_SOCKET_PATH` (derive `-client.sock` from its file stem),

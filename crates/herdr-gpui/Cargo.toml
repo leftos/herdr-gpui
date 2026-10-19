@@ -58,6 +58,7 @@ unicode-width.workspace        = true
 ureq.workspace                 = true
 uuid.workspace                 = true
 zeroize.workspace              = true
+zip.workspace                  = true
 
 [build-dependencies]
 winresource.workspace = true

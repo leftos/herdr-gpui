@@ -8,6 +8,7 @@ mod dismissed_conflict;
 mod fetch_meta;
 mod fetch_swap;
 mod fetches;
+mod folders;
 mod queries;
 mod saves;
 mod windows_names;
@@ -62,13 +63,35 @@ pub(crate) struct Received {
     pub(crate) bytes: Vec<u8>,
 }
 
+/// How the fake host answers one folder probe.
+pub(crate) type ProbeReply = fn() -> herdr_client::Result<ProbedFolder>;
+
+/// How the fake host answers one file fetch.
+pub(crate) type FetchReply = fn() -> herdr_client::Result<&'static [u8]>;
+
+/// What a probe finds when a test sets no answer.
+pub(crate) const PROBED: ProbedFolder = ProbedFolder {
+    bytes: 4096,
+    fingerprint: Some([7; 32]),
+};
+
 /// An SSH host whose answers a test chooses, the fetches and pushes asked
 /// of it, and a cache of its own in a temporary folder.
 pub(crate) struct FakeHost {
     asked: Arc<Mutex<Vec<RemotePath>>>,
+    /// Bytes every folder fetch serves, once set.
+    archive: Arc<Mutex<Option<Vec<u8>>>>,
+    archives_asked: Arc<Mutex<Vec<RemotePath>>>,
     cache: Arc<Cache>,
     /// Bytes every fetch serves in place of its reply, once set.
     file: Arc<Mutex<Option<Vec<u8>>>>,
+    /// Answers for the next fetches, in order; a fetch past them uses the
+    /// reply it was made with.
+    file_replies: Arc<Mutex<VecDeque<FetchReply>>>,
+    /// Answers for the next probes, in order; a probe past them finds
+    /// [`PROBED`].
+    probe_replies: Arc<Mutex<VecDeque<ProbeReply>>>,
+    probes_asked: Arc<Mutex<Vec<RemotePath>>>,
     /// Answers for the next pushes, in order; a push past them succeeds.
     push_replies: Arc<Mutex<VecDeque<PushReply>>>,
     received: Arc<Mutex<Vec<Received>>>,
@@ -81,8 +104,13 @@ impl FakeHost {
         let cache = Arc::new(Cache::create(root.path()).unwrap());
         Self {
             asked: Arc::default(),
+            archive: Arc::default(),
+            archives_asked: Arc::default(),
             cache,
             file: Arc::default(),
+            file_replies: Arc::default(),
+            probe_replies: Arc::default(),
+            probes_asked: Arc::default(),
             push_replies: Arc::default(),
             received: Arc::default(),
             _root: root,
@@ -90,20 +118,56 @@ impl FakeHost {
     }
 
     /// I/O that answers every fetch with `reply`.
-    pub(crate) fn io(&self, reply: fn() -> herdr_client::Result<&'static [u8]>) -> Io {
+    pub(crate) fn io(&self, reply: FetchReply) -> Io {
         let asked = self.asked.clone();
+        let archive = self.archive.clone();
+        let archives_asked = self.archives_asked.clone();
         let cache = self.cache.clone();
         let file = self.file.clone();
+        let file_replies = self.file_replies.clone();
+        let probe_replies = self.probe_replies.clone();
+        let probes_asked = self.probes_asked.clone();
         let replies = self.push_replies.clone();
         let received = self.received.clone();
         Io {
             step: Arc::new(|_, _| {}),
             cache: Arc::new(move || Ok(cache.clone())),
+            folder_probe: Arc::new(move |remote| {
+                probes_asked.lock().unwrap().push(remote.clone());
+                let reply = probe_replies.lock().unwrap().pop_front();
+                reply.map_or(Ok(PROBED), |reply| reply())
+            }),
+            folder_fetch: Arc::new(move |remote, out, max_bytes| {
+                archives_asked.lock().unwrap().push(remote.clone());
+                let bytes =
+                    archive
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .ok_or(herdr_client::Error::RemoteFile(
+                            herdr_client::RemoteFileError::Missing,
+                        ))?;
+                // As a real host does, an archive over the cap is refused
+                // before any of it is sent.
+                if bytes.len() as u64 > max_bytes {
+                    return Err(herdr_client::Error::RemoteFile(
+                        herdr_client::RemoteFileError::TooLarge { limit: max_bytes },
+                    ));
+                }
+                out.write_all(&bytes).unwrap();
+                Ok(Fetched {
+                    bytes: bytes.len() as u64,
+                    sha256: Sha256::digest(&bytes).into(),
+                })
+            }),
             fetch: Arc::new(move |remote, out| {
                 asked.lock().unwrap().push(remote.clone());
                 let bytes = match file.lock().unwrap().clone() {
                     Some(bytes) => bytes,
-                    None => reply()?.to_vec(),
+                    None => {
+                        let queued = file_replies.lock().unwrap().pop_front();
+                        queued.unwrap_or(reply)()?.to_vec()
+                    }
                 };
                 out.write_all(&bytes).unwrap();
                 Ok(Fetched {
@@ -143,6 +207,31 @@ impl FakeHost {
     /// Answers the next pushes with `replies`, in order.
     pub(crate) fn answer_pushes(&self, replies: &[PushReply]) {
         self.push_replies.lock().unwrap().extend(replies);
+    }
+
+    /// Answers the next probes with `replies`, in order.
+    pub(crate) fn answer_probes(&self, replies: &[ProbeReply]) {
+        self.probe_replies.lock().unwrap().extend(replies);
+    }
+
+    /// Answers the next file fetches with `replies`, in order.
+    pub(crate) fn answer_fetches(&self, replies: &[FetchReply]) {
+        self.file_replies.lock().unwrap().extend(replies);
+    }
+
+    /// Has later folder fetches serve `bytes`.
+    pub(crate) fn serve_archive(&self, bytes: &[u8]) {
+        *self.archive.lock().unwrap() = Some(bytes.to_vec());
+    }
+
+    /// Every folder fetch asked of this host so far.
+    pub(crate) fn archives(&self) -> Vec<RemotePath> {
+        self.archives_asked.lock().unwrap().clone()
+    }
+
+    /// Every probe asked of this host so far.
+    pub(crate) fn probes(&self) -> Vec<RemotePath> {
+        self.probes_asked.lock().unwrap().clone()
     }
 
     /// Every push asked of this host so far, refused or not.
