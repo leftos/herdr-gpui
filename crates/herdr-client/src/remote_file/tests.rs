@@ -1,6 +1,9 @@
 use super::*;
 use std::path::Path;
 
+mod folder;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod folder_exec;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod posix_exec;
 mod powershell_exec;

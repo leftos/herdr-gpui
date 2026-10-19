@@ -10,7 +10,7 @@ use super::{
 use crate::script::shell_quote;
 
 /// Sets `path` to the host's path, expanding a leading `~/` to `$HOME`.
-fn path_assignment(path: &str) -> String {
+pub(super) fn path_assignment(path: &str) -> String {
     assignment("path", path)
 }
 
@@ -147,14 +147,20 @@ done
 probe=
 probe_to="#;
 
-/// Picks the first SHA-256 tool on the host, before any input is read, so a
-/// host without one refuses without receiving the file.
-fn choose_hasher() -> String {
+/// Picks the first SHA-256 tool on the host into `$hasher`. With
+/// `when_missing`, a host without one exits with that code before any input
+/// is read, so a push refuses without receiving the file; without it,
+/// `$hasher` stays empty for the caller to answer with.
+pub(super) fn choose_hasher(when_missing: Option<i32>) -> String {
+    let (head, tail) = match when_missing {
+        Some(code) => (String::new(), format!("else exit {code}; fi")),
+        None => ("hasher=\n".to_owned(), "fi".to_owned()),
+    };
     format!(
-        r#"if command -v sha256sum >/dev/null 2>&1; then hasher='sha256sum'
+        r#"{head}if command -v sha256sum >/dev/null 2>&1; then hasher='sha256sum'
 elif command -v shasum >/dev/null 2>&1; then hasher='shasum -a 256'
 elif command -v openssl >/dev/null 2>&1; then hasher='openssl dgst -sha256 -r'
-else exit {NO_HASHER_EXIT}; fi"#
+{tail}"#
     )
 }
 
@@ -260,7 +266,7 @@ pub(super) fn push_script(path: &str, expect: Expect, access: Access<'_>, len: u
     // The shell's arithmetic is signed; no real length comes near it.
     let len = len.min(i64::MAX as u64);
     let hasher = match expect {
-        Expect::Sha256(_) => choose_hasher(),
+        Expect::Sha256(_) => choose_hasher(Some(NO_HASHER_EXIT)),
         Expect::Absent | Expect::Any => String::new(),
     };
     let source = match access {

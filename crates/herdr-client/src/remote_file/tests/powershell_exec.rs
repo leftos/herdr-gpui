@@ -2,6 +2,7 @@
 //! OpenSSH host would after decoding `-EncodedCommand`. They drive the
 //! PowerShell child directly, with no `ssh` in between.
 
+use super::super::folder as scripts;
 use super::*;
 use std::{
     path::PathBuf,
@@ -111,6 +112,24 @@ impl Fixture {
         run(
             self.shell,
             &powershell::fetch_script(path, max_bytes),
+            &[],
+            self.home.path(),
+        )
+    }
+
+    fn probe(&self, path: &str) -> Run {
+        run(
+            self.shell,
+            &scripts::powershell_probe_script(path),
+            &[],
+            self.home.path(),
+        )
+    }
+
+    fn archive(&self, path: &str, max_bytes: u64) -> Run {
+        run(
+            self.shell,
+            &scripts::powershell_archive_script(path, max_bytes),
             &[],
             self.home.path(),
         )
@@ -384,6 +403,148 @@ fn powershell_push_kept_copy_takes_its_sources_acl() {
             !copy_sddl.contains(";WD)"),
             "{shell}: the folder's Everyone entry reached the kept copy: {copy_sddl}"
         );
+    }
+}
+
+fn probes(fixture: &Fixture) {
+    let tree = "a tree";
+    std::fs::create_dir_all(fixture.path(&format!("{tree}/nested"))).unwrap();
+    std::fs::write(fixture.path(&format!("{tree}/a.txt")), [b'a'; 100]).unwrap();
+    std::fs::write(fixture.path(&format!("{tree}/nested/b.bin")), payload(5000)).unwrap();
+
+    let first = fixture.probe(&fixture.text(tree));
+    assert_code(&first, 0);
+    let first = parse_probe_output(&first.stdout).unwrap();
+    assert_eq!(first.bytes, 5 * 1024, "100 + 5000 bytes rounds up to 5 KiB");
+    let fingerprint = first.fingerprint.expect("PowerShell always has SHA-256");
+
+    let home = fixture.probe(&format!("~\\{tree}"));
+    assert_code(&home, 0);
+    assert_eq!(parse_probe_output(&home.stdout).unwrap(), first);
+    let home = fixture.probe(&format!("~/{tree}"));
+    assert_code(&home, 0);
+    assert_eq!(parse_probe_output(&home.stdout).unwrap(), first);
+
+    let again = fixture.probe(&fixture.text(tree));
+    assert_code(&again, 0);
+    assert_eq!(parse_probe_output(&again.stdout).unwrap(), first);
+
+    std::fs::write(fixture.path(&format!("{tree}/added.txt")), b"added").unwrap();
+    let changed = fixture.probe(&fixture.text(tree));
+    assert_code(&changed, 0);
+    assert_ne!(
+        parse_probe_output(&changed.stdout).unwrap().fingerprint,
+        Some(fingerprint)
+    );
+
+    assert_code(&fixture.probe(&fixture.text("missing")), MISSING_EXIT);
+    std::fs::write(fixture.path("file"), b"x").unwrap();
+    assert_code(&fixture.probe(&fixture.text("file")), NOT_A_FILE_EXIT);
+}
+
+fn archives(fixture: &Fixture) {
+    let tree = "it's a tree";
+    std::fs::create_dir_all(fixture.path(&format!("{tree}/nested"))).unwrap();
+    std::fs::write(fixture.path(&format!("{tree}/a.txt")), b"alpha").unwrap();
+    std::fs::write(fixture.path(&format!("{tree}/nested/b.bin")), payload(4096)).unwrap();
+
+    let zipped = fixture.archive(&fixture.text(tree), MAX_REMOTE_FILE_BYTES);
+    assert_code(&zipped, 0);
+    assert!(zipped.stdout.starts_with(b"PK"), "not a zip");
+
+    let zip = fixture.path("archive.zip");
+    std::fs::write(&zip, &zipped.stdout).unwrap();
+    let listing = format!(
+        "Add-Type -AssemblyName System.IO.Compression.FileSystem\n\
+         $zip = [System.IO.Compression.ZipFile]::OpenRead({})\n\
+         try {{ $zip.Entries | ForEach-Object {{ $_.FullName }} }} finally {{ $zip.Dispose() }}",
+        powershell::literal(zip.to_str().unwrap())
+    );
+    let listed = run(fixture.shell, &listing, &[], fixture.home.path());
+    assert_code(&listed, 0);
+    let mut names = String::from_utf8(listed.stdout)
+        .unwrap()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![format!("{tree}/a.txt"), format!("{tree}/nested/b.bin")]
+    );
+
+    let too_large = fixture.archive(&fixture.text(tree), 64);
+    assert_code(&too_large, TOO_LARGE_EXIT);
+    assert!(too_large.stdout.is_empty());
+
+    assert_code(
+        &fixture.archive(&fixture.text("missing"), MAX_REMOTE_FILE_BYTES),
+        MISSING_EXIT,
+    );
+}
+
+/// A reparse point inside the tree is skipped, so a junction that points at
+/// its own parent neither recurses nor changes the size or fingerprint.
+#[cfg(windows)]
+#[test]
+fn powershell_probe_skips_junctions() {
+    let shells = shells();
+    if shells.is_empty() {
+        eprintln!("skipped: no PowerShell on this machine");
+        return;
+    }
+    for shell in shells {
+        eprintln!("running under {shell}");
+        let fixture = Fixture {
+            shell,
+            home: tempfile::tempdir().unwrap(),
+        };
+        let tree = "tree";
+        std::fs::create_dir(fixture.path(tree)).unwrap();
+        std::fs::write(fixture.path("tree/a.txt"), b"alpha").unwrap();
+        let before = fixture.probe(&fixture.text(tree));
+        assert_code(&before, 0);
+        let before = parse_probe_output(&before.stdout).unwrap();
+
+        let created = run(
+            shell,
+            &format!(
+                "New-Item -ItemType Junction -Path {} -Target {} | Out-Null",
+                powershell::literal(&fixture.text(&format!("{tree}/link"))),
+                powershell::literal(&fixture.text(tree)),
+            ),
+            &[],
+            fixture.home.path(),
+        );
+        assert_code(&created, 0);
+
+        let after = fixture.probe(&fixture.text(tree));
+        assert_code(&after, 0);
+        assert_eq!(parse_probe_output(&after.stdout).unwrap(), before);
+    }
+}
+
+#[test]
+fn powershell_scripts_probe_and_archive_folders() {
+    let shells = shells();
+    if shells.is_empty() {
+        eprintln!("skipped: no PowerShell on this machine");
+        return;
+    }
+    for shell in shells {
+        eprintln!("running under {shell}");
+        let probe = Fixture {
+            shell,
+            home: tempfile::tempdir().unwrap(),
+        };
+        probes(&probe);
+        let archive = Fixture {
+            shell,
+            home: tempfile::tempdir().unwrap(),
+        };
+        archives(&archive);
     }
 }
 

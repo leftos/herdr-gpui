@@ -71,7 +71,8 @@ pub use process::CREATE_NO_WINDOW;
 pub use process::new_command;
 pub use remote_file::{
     Access as RemoteFileAccess, Error as RemoteFileError, Expect, Fetched, MAX_REMOTE_FILE_BYTES,
-    RemoteFile, RemoteShell, fetch_remote_file, push_remote_file,
+    ProbedFolder, RemoteFile, RemoteShell, fetch_remote_file, fetch_remote_folder,
+    probe_remote_folder, push_remote_file,
 };
 pub use remote_host::RemoteHost;
 pub use script::{ScriptHost, ScriptLimits, run_script, run_script_command, shell_quote};

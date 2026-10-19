@@ -13,12 +13,13 @@ const REPARSE_POINT: u32 = 0x400;
 /// `FileAttributes.Directory | FileAttributes.Device`.
 const NOT_A_FILE: u32 = 0x10 | 0x40;
 
-const PREAMBLE: &str = "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'";
+pub(super) const PREAMBLE: &str =
+    "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'";
 
 /// `value` as a single-quoted PowerShell string. PowerShell also ends a
 /// single-quoted string at the typographic single quotes, so each of those is
 /// doubled too.
-fn literal(value: &str) -> String {
+pub(super) fn literal(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('\'');
     for ch in value.chars() {
@@ -33,7 +34,7 @@ fn literal(value: &str) -> String {
 
 /// The host's path as an expression, expanding a leading `~\` or `~/` to the
 /// user's profile folder.
-fn path_expression(path: &str) -> String {
+pub(super) fn path_expression(path: &str) -> String {
     if path == "~" {
         return "$env:USERPROFILE".to_owned();
     }
