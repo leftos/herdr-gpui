@@ -90,10 +90,16 @@ impl Fixture {
     /// Runs the scripts with a `chgrp` that always fails first on `PATH`, as
     /// for a user outside the file's group. Keep the returned folder alive.
     fn fail_chgrp(&mut self) -> tempfile::TempDir {
+        self.shim("chgrp", "exit 1\n")
+    }
+
+    /// Runs the scripts with a `/bin/sh` script named `tool` holding `body`
+    /// first on `PATH`. Keep the returned folder alive.
+    fn shim(&mut self, tool: &str, body: &str) -> tempfile::TempDir {
         let bin = tempfile::tempdir().unwrap();
-        let chgrp = bin.path().join("chgrp");
-        std::fs::write(&chgrp, "#!/bin/sh\nexit 1\n").unwrap();
-        std::fs::set_permissions(&chgrp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let shim = bin.path().join(tool);
+        std::fs::write(&shim, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path = std::env::var_os("PATH").unwrap_or_default();
         let mut folders = vec![bin.path().to_owned()];
         folders.extend(std::env::split_paths(&path));
@@ -421,23 +427,21 @@ fn push_like_a_link_or_folder_leaves_the_new_file_private() {
     }
 }
 
+/// A folder's ACL can let another user replace the file, so the push, which
+/// the copy's inherited ACL sends in place, refuses instead.
 #[test]
 #[ignore = "needs setfacl and an ACL-capable filesystem"]
-fn push_under_a_folders_default_acl_overwrites_in_place() {
-    use std::os::unix::fs::MetadataExt;
+fn push_under_a_folders_acl_refuses_to_write_in_place() {
     let fixture = Fixture::new();
     std::fs::write(fixture.path("file"), b"old").unwrap();
     fixture.set_mode("file", 0o640);
     let home = fixture.home.path().to_str().unwrap();
+    output_of("setfacl", &["-m", "u:nobody:rwx", home]);
     output_of("setfacl", &["-d", "-m", "u:nobody:r", home]);
     let file = fixture.text("file");
-    let before = std::fs::metadata(&file).unwrap();
-    fixture.push(&file, Expect::Any, b"new").unwrap();
-    let after = std::fs::metadata(&file).unwrap();
-    assert_eq!(std::fs::read(&file).unwrap(), b"new");
-    assert_eq!(after.ino(), before.ino(), "the file was written in place");
-    let acl = output_of("getfacl", &["--omit-header", &file]);
-    assert!(!acl.contains("nobody"), "{acl}");
+    let pushed = fixture.push(&file, Expect::Any, b"new");
+    assert!(matches!(pushed, Err(Error::SharedFolder)), "{pushed:?}");
+    assert_eq!(std::fs::read(&file).unwrap(), b"old");
     assert_eq!(fixture.mode("file"), 0o640);
     assert_eq!(entries(fixture.home.path()), ["file"]);
 }
@@ -508,7 +512,7 @@ fn push_cut_off_short_of_its_length_replaces_nothing() {
 fn push_without_stat_still_refuses_a_cut_off_transfer() {
     let mut fixture = Fixture::new();
     std::fs::write(fixture.path("file"), b"old").unwrap();
-    let bin = tool_folder(&["cat", "chmod", "mktemp", "mv", "rm", "wc"]);
+    let bin = tool_folder(WITHOUT_STAT);
     fixture.path_env = Some(bin.path().to_owned());
     let short = fixture.push_claiming(&fixture.text("file"), Expect::Any, 9, b"new");
     assert!(matches!(short, Err(Error::Incomplete)), "{short:?}");
@@ -516,32 +520,48 @@ fn push_without_stat_still_refuses_a_cut_off_transfer() {
     assert_eq!(entries(fixture.home.path()), ["file"]);
 }
 
+/// Every tool a push runs except `stat` and the hashers.
+const WITHOUT_STAT: &[&str] = &[
+    "cat", "chmod", "id", "ls", "mktemp", "mv", "rm", "rmdir", "wc",
+];
+
+/// Where this machine keeps `tool`.
+fn real_tool(tool: &str) -> std::path::PathBuf {
+    ["/bin", "/usr/bin"]
+        .iter()
+        .map(|folder| Path::new(folder).join(tool))
+        .find(|candidate| candidate.exists())
+        .unwrap()
+}
+
 /// A folder holding links to just `tools`, from this machine's own folders.
 fn tool_folder(tools: &[&str]) -> tempfile::TempDir {
     let bin = tempfile::tempdir().unwrap();
     for tool in tools {
-        let found = ["/bin", "/usr/bin"]
-            .iter()
-            .map(|folder| Path::new(folder).join(tool))
-            .find(|candidate| candidate.exists())
-            .unwrap();
-        symlink(found, bin.path().join(tool)).unwrap();
+        symlink(real_tool(tool), bin.path().join(tool)).unwrap();
     }
     bin
 }
 
 #[test]
 fn push_without_stat_overwrites_in_place_and_keeps_the_mode() {
+    use std::os::unix::fs::MetadataExt;
     let mut fixture = Fixture::new();
     std::fs::write(fixture.path("file"), b"old").unwrap();
     fixture.set_mode("file", 0o755);
-    let bin = tool_folder(&["cat", "chmod", "mktemp", "mv", "rm", "wc"]);
+    // Only the SSH user can replace files in a 0700 folder, so writing in
+    // place there is safe.
+    std::fs::set_permissions(fixture.home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let bin = tool_folder(WITHOUT_STAT);
     fixture.path_env = Some(bin.path().to_owned());
+    let before = std::fs::metadata(fixture.path("file")).unwrap();
     let content = payload(70_000);
     fixture
         .push(&fixture.text("file"), Expect::Any, &content)
         .unwrap();
+    let after = std::fs::metadata(fixture.path("file")).unwrap();
     assert!(std::fs::read(fixture.path("file")).unwrap() == content);
+    assert_eq!(after.ino(), before.ino(), "the file was written in place");
     assert_eq!(fixture.mode("file"), 0o755);
     assert_eq!(entries(fixture.home.path()), ["file"]);
 }
@@ -602,4 +622,155 @@ fn push_of_unread_output_is_a_script_failure() {
         script_error(&error),
         Some(crate::Error::ScriptOutputLimit)
     ));
+}
+
+/// Writes `file` holding `old` and a private `victim` file another user
+/// would like the push to write through.
+fn file_and_victim(fixture: &Fixture) {
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    fixture.set_mode("file", 0o644);
+    std::fs::write(fixture.path("victim"), b"victim").unwrap();
+    fixture.set_mode("victim", 0o600);
+}
+
+fn assert_victim_unchanged(fixture: &Fixture) {
+    assert_eq!(std::fs::read(fixture.path("victim")).unwrap(), b"victim");
+    assert_eq!(fixture.mode("victim"), 0o600);
+}
+
+/// The `ls` stand-in marks the target with an ACL, which sends the push in
+/// place, and swaps it for a link to the victim as it lists it, as another
+/// user who can rename entries in a 0777 folder can.
+#[test]
+fn push_refuses_to_write_in_place_in_a_folder_others_can_write() {
+    let mut fixture = Fixture::new();
+    file_and_victim(&fixture);
+    std::fs::set_permissions(fixture.home.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+    let file = fixture.path("file");
+    let body = format!(
+        "case \"$*\" in\n*'-ld -- '*/file)\n  rm -f -- '{file}' && ln -s '{victim}' '{file}'\n  \
+         echo '-rw-r--r--+ 1 0 0 3 Jan  1 00:00 file'\n  exit 0 ;;\nesac\nexec '{ls}' \"$@\"\n",
+        file = file.display(),
+        victim = fixture.path("victim").display(),
+        ls = real_tool("ls").display(),
+    );
+    let _bin = fixture.shim("ls", &body);
+    let pushed = fixture.push(&fixture.text("file"), Expect::Any, b"new");
+    assert!(matches!(pushed, Err(Error::SharedFolder)), "{pushed:?}");
+    assert_victim_unchanged(&fixture);
+    assert_eq!(entries(fixture.home.path()), ["file", "victim"]);
+}
+
+/// The `mktemp` stand-in moves what it made aside and plants a link to the
+/// victim at the name it prints, as another user can in a shared folder.
+#[test]
+fn push_never_writes_through_a_link_planted_at_its_temporary_name() {
+    let mut fixture = Fixture::new();
+    file_and_victim(&fixture);
+    let body = format!(
+        "made=$('{mktemp}' \"$@\") || exit 1\nmv -- \"$made\" '{aside}'\nln -s '{victim}' \
+         \"$made\"\nprintf '%s\\n' \"$made\"\n",
+        mktemp = real_tool("mktemp").display(),
+        aside = fixture.path("aside").display(),
+        victim = fixture.path("victim").display(),
+    );
+    let _bin = fixture.shim("mktemp", &body);
+    let pushed = fixture.push(&fixture.text("file"), Expect::Any, b"new");
+    assert!(pushed.is_err(), "{pushed:?}");
+    assert_victim_unchanged(&fixture);
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"old");
+}
+
+/// The `chmod` stand-in first moves the push's temporary entry in the folder
+/// aside and plants a link to the victim in its place, as another user can in
+/// a shared folder.
+#[test]
+fn push_never_chmods_through_a_link_swapped_in_for_its_copy() {
+    let mut fixture = Fixture::new();
+    file_and_victim(&fixture);
+    let body = format!(
+        "for entry in '{home}'/.file.*; do\n  if [ -e \"$entry\" ] && [ ! -e '{aside}' ]; then\n    \
+         mv -- \"$entry\" '{aside}' && ln -s '{victim}' \"$entry\"\n  fi\ndone\nexec '{chmod}' \
+         \"$@\"\n",
+        home = fixture.home.path().display(),
+        aside = fixture.path("aside").display(),
+        victim = fixture.path("victim").display(),
+        chmod = real_tool("chmod").display(),
+    );
+    let _bin = fixture.shim("chmod", &body);
+    let pushed = fixture.push(&fixture.text("file"), Expect::Any, b"new");
+    assert!(pushed.is_ok(), "{pushed:?}");
+    assert_victim_unchanged(&fixture);
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(fixture.mode("file"), 0o644);
+}
+
+/// "Keep both" with a file that appears at the new name after the conflict
+/// check: the `stat` stand-in plants it and fails, which would send the push
+/// in place over it.
+#[test]
+fn push_absent_never_writes_in_place_over_a_file_that_appeared() {
+    let mut fixture = Fixture::new();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    let copy = fixture.path("file.conflict");
+    let body = format!(
+        "[ -e '{copy}' ] || printf planted > '{copy}'\nexit 1\n",
+        copy = copy.display()
+    );
+    let _bin = fixture.shim("stat", &body);
+    let pushed = fixture.push_like(
+        &fixture.text("file.conflict"),
+        &fixture.text("file"),
+        b"mine",
+    );
+    assert!(matches!(pushed, Err(Error::Conflict)), "{pushed:?}");
+    assert_eq!(std::fs::read(&copy).unwrap(), b"planted");
+    assert_eq!(entries(fixture.home.path()), ["file", "file.conflict"]);
+}
+
+/// Another user can swap the push's work folder for a link to one of the
+/// SSH user's own private folders beside it, which passes every check on
+/// the work folder; the `mktemp` stand-in hands that folder out for `-d`.
+/// The push must open, replace, and remove only names it created there.
+#[test]
+fn push_never_touches_files_in_a_private_folder_handed_out_as_its_work_folder() {
+    let mut fixture = Fixture::new();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    std::fs::create_dir(fixture.path("sibling")).unwrap();
+    fixture.set_mode("sibling", 0o700);
+    let kept = ["f", "p", "q"];
+    for name in kept {
+        std::fs::write(fixture.path("sibling").join(name), name).unwrap();
+    }
+    let body = format!(
+        "case \"$1\" in -d) printf '%s\\n' ./sibling; exit 0 ;; esac\nexec '{mktemp}' \"$@\"\n",
+        mktemp = real_tool("mktemp").display(),
+    );
+    let _bin = fixture.shim("mktemp", &body);
+    let pushed = fixture.push(&fixture.text("file"), Expect::Any, b"new");
+    assert!(pushed.is_ok(), "{pushed:?}");
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(entries(&fixture.path("sibling")), kept);
+    for name in kept {
+        let held = std::fs::read(fixture.path("sibling").join(name)).unwrap();
+        assert_eq!(held, name.as_bytes(), "{name}");
+    }
+}
+
+/// "Keep both" with a file that appears at the new name after the conflict
+/// check and before the rename: the `mv` stand-in plants it on its first run.
+#[test]
+fn push_absent_never_renames_over_a_file_that_appeared() {
+    let mut fixture = Fixture::new();
+    let target = fixture.path("new");
+    let body = format!(
+        "[ -e '{target}' ] || printf planted > '{target}'\nexec '{mv}' \"$@\"\n",
+        target = target.display(),
+        mv = real_tool("mv").display(),
+    );
+    let _bin = fixture.shim("mv", &body);
+    let pushed = fixture.push(&fixture.text("new"), Expect::Absent, b"mine");
+    assert!(matches!(pushed, Err(Error::Conflict)), "{pushed:?}");
+    assert_eq!(std::fs::read(&target).unwrap(), b"planted");
+    assert_eq!(entries(fixture.home.path()), ["new"]);
 }

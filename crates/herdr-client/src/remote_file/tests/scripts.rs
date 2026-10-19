@@ -43,8 +43,9 @@ fn posix_scripts_never_pass_the_path_where_it_could_be_an_option() {
     assert!(fetch.contains("wc -c < \"$path\""));
     assert!(fetch.contains("exec cat < \"$path\""));
     let push = posix::push_script("-x", Expect::Sha256([0; 32]), Access::Keep, 0);
-    assert!(push.contains("$hasher < \"$path\""));
-    assert!(push.contains("mv -f -- \"$tmp\" \"$path\""));
+    assert!(push.contains("$hasher < \"$target\""));
+    assert!(push.contains("mv -f $no_follow -- \"$copy\" \"$target\""));
+    assert!(push.contains("\ntarget=../$name\n"));
 }
 
 #[test]
@@ -62,7 +63,7 @@ fn posix_push_consults_a_hasher_only_for_an_expected_hash() {
 fn pushes_check_the_received_length_before_the_expectation() {
     let posix = posix::push_script("/f", Expect::Sha256([0; 32]), Access::Keep, 42);
     let counted = posix.find("-ne 42 ]; then exit 70").unwrap();
-    assert!(counted < posix.find("$hasher < \"$path\"").unwrap());
+    assert!(counted < posix.find("$hasher < \"$target\"").unwrap());
     assert!(counted < posix.find("mv -f").unwrap());
     assert!(
         posix::push_script("/f", Expect::Any, Access::Keep, u64::MAX)
@@ -87,10 +88,24 @@ fn posix_push_names_where_a_new_files_access_comes_from() {
 #[test]
 fn posix_push_checks_it_can_write_in_place_before_writing() {
     let script = posix::push_script("/f", Expect::Any, Access::Keep, 0);
-    let checked = script
-        .find("if [ ! -w \"$path\" ]; then exit 71; fi")
+    let shared = script
+        .find("if [ -z \"$safe\" ]; then exit 72; fi")
         .unwrap();
-    assert!(checked < script.find("cat < \"$tmp\" > \"$path\"").unwrap());
+    let checked = script
+        .find("if [ ! -w \"$target\" ]; then exit 71; fi")
+        .unwrap();
+    let written = script.find("cat < \"$copy\" > \"$target\"").unwrap();
+    assert!(shared < written && checked < written);
+    // "Keep both" checks for a file that appeared before writing in place
+    // and again just before the rename.
+    let absent = posix::push_script("/f", Expect::Absent, Access::Keep, 0);
+    let check = "if [ -e \"$target\" ] || [ -L \"$target\" ]; then exit 75; fi";
+    let in_place = absent.find("\nelif [ -e \"$target\" ]; then\n").unwrap();
+    let conflict = in_place + absent[in_place..].find(check).unwrap();
+    assert!(conflict < absent.find("cat < \"$copy\" > \"$target\"").unwrap());
+    let renamed = absent.find("\nmv -f $no_follow").unwrap();
+    let last = absent.rfind(check).unwrap();
+    assert!(absent.find("probe_to=$(mktemp").unwrap() < last && last < renamed);
     assert!(
         script.contains("??????????[+@]*"),
         "macOS marks an ACL with @ too"
@@ -243,6 +258,7 @@ fn exit_codes_map_to_refusals() {
     assert!(matches!(classify(exit(69), None), Error::NoHasher));
     assert!(matches!(classify(exit(70), None), Error::Incomplete));
     assert!(matches!(classify(exit(71), None), Error::Access));
+    assert!(matches!(classify(exit(72), None), Error::SharedFolder));
     assert!(matches!(classify(exit(75), None), Error::Conflict));
     assert!(matches!(
         classify(crate::Error::ScriptOutputLimit, Some(7)),
@@ -300,6 +316,11 @@ fn messages_are_short_and_plain() {
     assert_eq!(
         Error::Access.to_string(),
         "could not keep the file's access; nothing was changed"
+    );
+    assert_eq!(
+        Error::SharedFolder.to_string(),
+        "other users can replace files in that folder on the host, so it was not written in \
+         place; nothing was changed"
     );
 }
 
