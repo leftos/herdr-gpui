@@ -5,6 +5,7 @@
 //! without removing their own, and leaves a running instance's alone.
 
 use super::{Error, Owner, Result};
+use herdr_client::RemoteShell;
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -83,13 +84,19 @@ impl Cache {
     /// Where `owner`'s copy of `path` on `target` is kept: a folder per
     /// window, per host, and per path, so copies never collide, holding the
     /// file under the host's own name for it, so an application shows its
-    /// real name and type.
-    pub(crate) fn copy_path(&self, owner: Owner, target: &str, path: &str) -> PathBuf {
+    /// real name and type, split from its folders at `shell`'s separators.
+    pub(crate) fn copy_path(
+        &self,
+        owner: Owner,
+        target: &str,
+        path: &str,
+        shell: RemoteShell,
+    ) -> PathBuf {
         self.launch
             .join(format!("w{}", owner.0))
             .join(short_hash(target))
             .join(short_hash(path))
-            .join(local_name(basename(path), cfg!(windows)).as_ref())
+            .join(local_name(basename(path, shell), cfg!(windows)).as_ref())
     }
 
     #[cfg(test)]
@@ -131,10 +138,15 @@ pub(crate) fn shared() -> Result<Arc<Cache>> {
     Ok(cache)
 }
 
-/// The last segment of a host's path, split at either separator, or `file`
-/// when that is no plain file name.
-pub(crate) fn basename(path: &str) -> &str {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
+/// The last segment of a host's path, split at the separators of the host's
+/// `shell`, or `file` when that is no plain file name. A backslash is a
+/// plain name character on a POSIX host.
+pub(crate) fn basename(path: &str, shell: RemoteShell) -> &str {
+    let separators: &[char] = match shell {
+        RemoteShell::Posix => &['/'],
+        RemoteShell::PowerShell => &['/', '\\'],
+    };
+    let name = path.rsplit(separators).next().unwrap_or_default();
     if matches!(name, "" | "." | "..") || name.chars().any(char::is_control) {
         FALLBACK_NAME
     } else {
@@ -194,10 +206,23 @@ fn windows_device(name: &str) -> bool {
 /// beside it, under a name no other fetch of this process has, so two
 /// fetches of one copy never write or remove each other's bytes.
 pub(super) fn part_path(local: &Path) -> PathBuf {
+    beside(local, "part")
+}
+
+/// Where a fetch moves the copy at `local` aside while it puts the host's
+/// bytes in its place: beside it, under a name no other fetch of this
+/// process has.
+pub(super) fn kept_path(local: &Path) -> PathBuf {
+    beside(local, "kept")
+}
+
+/// `local`'s name with a serial number unique in this process and
+/// `extension` added, in `local`'s folder.
+fn beside(local: &Path, extension: &str) -> PathBuf {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
     let mut name = local.file_name().unwrap_or_default().to_owned();
-    name.push(format!(".{serial}.part"));
+    name.push(format!(".{serial}.{extension}"));
     local.with_file_name(name)
 }
 

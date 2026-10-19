@@ -204,7 +204,7 @@ impl HerdrWindow {
                 return self.start_remote_push(key, Push::Beside(n + 1), cx);
             }
             Push::Beside(_) if error.is_conflict() => {
-                let last = super::basename(&remote.path).to_owned();
+                let last = super::basename(&remote.path, remote.shell).to_owned();
                 self.remote_push_failed(&Error::NamesTaken { last }, cx);
                 Event::Conflicted
             }
@@ -226,7 +226,7 @@ impl HerdrWindow {
         pushed: Pushed,
         cx: &mut Context<Self>,
     ) {
-        let name = super::basename(&remote.path);
+        let name = super::basename(&remote.path, remote.shell);
         let (event, text) = match push {
             Push::Beside(_) => (
                 Event::KeptBoth,
@@ -262,6 +262,10 @@ impl HerdrWindow {
             path: key.1.clone(),
             line: None,
         };
+        // Another fetch writing the copy fails this one rather than race it.
+        if !self.remote_files.fetching.insert(key.clone()) {
+            return self.remote_refetch_failed(key, cx);
+        }
         let io = self.remote_files.io.clone();
         let owner = self.remote_files.owner;
         let fetch = cx
@@ -281,6 +285,7 @@ impl HerdrWindow {
         fetched: super::Result<Fetch>,
         cx: &mut Context<Self>,
     ) {
+        self.remote_files.fetching.remove(&key);
         let done = match fetched {
             Ok(Fetch::Written(done)) => *done,
             // A fetch that keeps no edits always writes the copy.
@@ -293,7 +298,7 @@ impl HerdrWindow {
         };
         let text = format!(
             "Your copy of {} now holds the version on {}",
-            super::basename(&key.1),
+            super::basename(&key.1, done.copy.shell),
             key.0
         );
         self.remote_files.record(done);
