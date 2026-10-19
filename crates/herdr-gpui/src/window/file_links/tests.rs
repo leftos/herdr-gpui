@@ -49,7 +49,7 @@ fn paths_resolve_under_home_or_the_pane_directory() {
 }
 
 #[test]
-fn only_documents_and_plain_folders_open_themselves() {
+fn only_documents_and_folders_open_themselves() {
     let root = tempfile::tempdir().unwrap();
     // Symlinks resolved, as on macOS where the temporary folder is behind
     // one; not `canonicalize`, which also expands Windows short names.
@@ -74,9 +74,10 @@ fn only_documents_and_plain_folders_open_themselves() {
     let docs = root.path().join("docs");
     std::fs::create_dir(&docs).unwrap();
     assert_eq!(opened(&docs), Some(real.join("docs")));
+    // A folder opens itself whatever its name, a bundle's included.
     let bundle = root.path().join("Tool.app");
     std::fs::create_dir(&bundle).unwrap();
-    assert_eq!(opened(&bundle), Some(real.clone()));
+    assert_eq!(opened(&bundle), Some(real.join("Tool.app")));
     assert_eq!(opened(&root.path().join("gone.txt")), None);
     assert!(!remote(root.path()));
     #[cfg(unix)]
@@ -88,7 +89,7 @@ fn only_documents_and_plain_folders_open_themselves() {
         // A document's name on a symlink does not disguise where it leads.
         let disguise = root.path().join("notes.md");
         std::os::unix::fs::symlink(&bundle, &disguise).unwrap();
-        assert_eq!(opened(&disguise), Some(real.clone()));
+        assert_eq!(opened(&disguise), Some(real.join("Tool.app")));
         // Nor does a folder named like one hide a bundle above it.
         let inside = bundle.join("run.sh");
         std::fs::write(&inside, "x").unwrap();
