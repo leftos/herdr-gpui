@@ -267,7 +267,7 @@ impl HerdrWindow {
         let fetch = cx
             .background_executor()
             // The user chose to drop the copy's edits, so none are kept.
-            .spawn(async move { fetch_copy(&io, owner, &remote, None) });
+            .spawn(async move { fetch_copy(&io, owner, &remote, None, None) });
         cx.spawn(async move |this, cx| {
             let fetched = fetch.await;
             let _ = this.update(cx, |this, cx| this.remote_file_refetched(key, fetched, cx));

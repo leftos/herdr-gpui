@@ -18,7 +18,9 @@ mod device_themes;
 mod double_shift;
 pub(crate) mod file_drop;
 mod file_links;
+#[cfg(test)]
 pub(crate) use file_links::opened;
+pub(crate) use file_links::{opened_url, start_browser};
 mod find;
 mod flash;
 pub(crate) use commands::run_window_command;
@@ -170,6 +172,9 @@ pub(crate) struct HerdrWindow {
     pub(crate) copy_mode: Option<copy_mode::CopyModeState>,
     /// Prepared daemon announcement and release notes text.
     pub(crate) daemon_text: crate::release_notes::DaemonText,
+    /// Starts the default browser on a page with a query or fragment, which
+    /// the system opener would drop.
+    pub(crate) default_browser: file_links::StartBrowser,
     /// Notes waiting for their agents to be ready for them.
     pub(crate) deliveries: crate::agent_notes::Deliveries,
     /// A press on a device's header that may lift it for reordering.

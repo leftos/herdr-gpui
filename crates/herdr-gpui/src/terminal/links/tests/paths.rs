@@ -23,6 +23,7 @@ fn bare(path: &str) -> RowTarget {
     RowTarget::Path {
         path: path.into(),
         line: None,
+        query: None,
         explicit: false,
     }
 }
@@ -109,6 +110,7 @@ fn paths_are_pane_links_only_and_never_web_links() {
         RowTarget::Path {
             path: "src/lib.rs".into(),
             line: Some(4),
+            query: None,
             explicit: false,
         }
     );
@@ -164,6 +166,7 @@ fn a_hyperlink_names_a_path_by_a_file_address_or_without_a_scheme() {
     let named = |path: &str| RowTarget::Path {
         path: path.into(),
         line: None,
+        query: None,
         explicit: true,
     };
     let mut s = surface("report");

@@ -239,7 +239,7 @@ impl HerdrWindow {
         cx: &mut Context<Self>,
     ) {
         if matches!(error, crate::Error::Editor(Error::Path)) {
-            self.open_in_system_app(target.path.clone(), cx);
+            self.open_in_system_app(target.path.clone(), None, cx);
         }
         self.show_flash(crate::window::Flash::warning(error.to_string()), cx);
     }

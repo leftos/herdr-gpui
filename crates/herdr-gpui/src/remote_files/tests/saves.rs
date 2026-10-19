@@ -375,7 +375,7 @@ fn a_remote_save_made_while_a_click_fetches_is_kept() {
         ..io
     };
     let outcome = std::thread::scope(|scope| {
-        let fetching = scope.spawn(|| fetch_copy(&gated, owner, &remote(PATH), Some(synced)));
+        let fetching = scope.spawn(|| fetch_copy(&gated, owner, &remote(PATH), Some(synced), None));
         on_start.recv().unwrap();
         std::fs::write(&local, b"# Saved meanwhile\n").unwrap();
         release.send(()).unwrap();
@@ -396,7 +396,7 @@ fn a_remote_save_made_while_a_click_fetches_is_kept() {
     let (files, key, local) = fetched(&host);
     host.change_file(b"# Newer\n");
     let synced = Some(files.copies[&key].synced_meta);
-    let written = fetch_copy(&files.io, files.owner, &remote(PATH), synced).unwrap();
+    let written = fetch_copy(&files.io, files.owner, &remote(PATH), synced, None).unwrap();
     assert!(matches!(written, Fetch::Written(_)));
     assert_eq!(std::fs::read(&local).unwrap(), b"# Newer\n");
 }

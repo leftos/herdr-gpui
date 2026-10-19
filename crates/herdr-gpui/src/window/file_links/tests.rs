@@ -10,6 +10,7 @@ use herdr_client::{
 };
 use std::sync::Arc;
 
+mod queries;
 mod remote;
 mod remote_saves;
 
@@ -20,6 +21,7 @@ fn paths_resolve_under_home_or_the_pane_directory() {
     let link = |path: &str, cwd: Option<&Path>| FileLink {
         path: path.into(),
         line: None,
+        query: None,
         pane_id: "pane".into(),
         cwd: cwd.map(|cwd| cwd.to_str().unwrap().into()),
         explicit: false,

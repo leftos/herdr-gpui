@@ -10,14 +10,14 @@ fn a_click_while_its_file_is_fetched_starts_no_second_fetch(cx: &mut TestAppCont
     let host = FakeHost::new();
     let (view, cx) = window(&host, cx);
     view.update(cx, |view, cx| {
-        view.open_remote_file(remote(PATH), cx);
-        view.open_remote_file(remote(PATH), cx);
+        view.open_remote_file(remote(PATH), None, cx);
+        view.open_remote_file(remote(PATH), None, cx);
     });
     cx.run_until_parked();
     assert_eq!(host.asked().len(), 1);
 
     // Once that fetch is done, a click fetches again.
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), cx));
+    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
     cx.run_until_parked();
     assert_eq!(host.asked().len(), 2);
 }
@@ -27,9 +27,9 @@ fn a_failed_click_fetch_lets_the_next_click_fetch_again(cx: &mut TestAppContext)
     let host = FakeHost::new();
     let (view, cx) = window(&host, cx);
     view.update(cx, |view, _| host.serve(&mut view.remote_files, missing));
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), cx));
+    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
     cx.run_until_parked();
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), cx));
+    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
     cx.run_until_parked();
     assert_eq!(host.asked().len(), 2);
 }

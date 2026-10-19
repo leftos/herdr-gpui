@@ -54,6 +54,7 @@ mod contrast;
 mod control;
 mod copy_mode;
 mod daemon;
+mod default_browser;
 mod devices_overview;
 mod dialog_input;
 mod dispatch;
