@@ -252,6 +252,14 @@ struct Filled {
     links_skipped: u32,
 }
 
+/// Where one folder transfer writes, and the size limit it fetches under.
+struct Transfer<'a> {
+    archive: &'a Path,
+    staging: &'a Path,
+    local: &'a Path,
+    cap_bytes: u64,
+}
+
 /// Fetches `remote`'s folder as an archive and extracts it at `owner`'s copy
 /// of the path, replacing any copy there. Blocking: call only on a
 /// background worker.
@@ -274,16 +282,13 @@ fn fetch_folder(
     let staging = cache::part_path(&local);
     cache::create_private_dirs(&staging)?;
     let cancelled = AtomicBool::new(false);
-    let filled = fill(
-        io,
-        remote,
-        &probed.top,
+    let transfer = Transfer {
+        archive: &archive,
+        staging: &staging,
+        local: &local,
         cap_bytes,
-        &archive,
-        &staging,
-        &local,
-        &cancelled,
-    );
+    };
+    let filled = fill(io, remote, &probed.top, transfer, &cancelled);
     let filled = match filled {
         Ok(filled) => filled,
         Err(error) => {
@@ -312,46 +317,50 @@ fn fill(
     io: &Io,
     remote: &RemotePath,
     top: &str,
-    cap_bytes: u64,
-    archive: &Path,
-    staging: &Path,
-    local: &Path,
+    transfer: Transfer<'_>,
     cancelled: &AtomicBool,
 ) -> Result<Filled> {
-    let mut file = archive::create_file(archive).map_err(|source| Error::Archive {
-        path: archive.to_owned(),
+    let mut file = archive::create_file(transfer.archive).map_err(|source| Error::Archive {
+        path: transfer.archive.to_owned(),
         source,
     })?;
-    let fetched = (io.folder_fetch)(remote, &mut file, cap_bytes).map_err(|error| match error {
-        herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::TooLarge { limit }) => {
-            Error::FolderTooLarge { limit }
-        }
-        other => Error::Fetch(other),
-    })?;
+    let fetched =
+        (io.folder_fetch)(remote, &mut file, transfer.cap_bytes).map_err(|error| match error {
+            herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::TooLarge { limit }) => {
+                Error::FolderTooLarge { limit }
+            }
+            other => Error::Fetch(other),
+        })?;
     drop(file);
-    let extracted = archive::extract(archive, staging, top, format_for(remote.shell), cancelled)?;
+    let extracted = archive::extract(
+        transfer.archive,
+        transfer.staging,
+        top,
+        format_for(remote.shell),
+        cancelled,
+    )?;
     // The archive is no use once unpacked; failing to remove it is not.
-    remove_file(archive);
-    if local.is_dir() {
-        std::fs::remove_dir_all(local).map_err(|source| Error::FolderInUse {
-            path: local.to_owned(),
+    remove_file(transfer.archive);
+    if transfer.local.is_dir() {
+        std::fs::remove_dir_all(transfer.local).map_err(|source| Error::FolderInUse {
+            path: transfer.local.to_owned(),
             source,
         })?;
-    } else if local.exists() {
+    } else if transfer.local.exists() {
         // A file copy of the same path, before the host's path became a folder.
-        std::fs::remove_file(local).map_err(|source| Error::FolderInUse {
-            path: local.to_owned(),
+        std::fs::remove_file(transfer.local).map_err(|source| Error::FolderInUse {
+            path: transfer.local.to_owned(),
             source,
         })?;
     }
-    std::fs::rename(staging, local).map_err(|source| Error::Cache {
-        path: local.to_owned(),
+    std::fs::rename(transfer.staging, transfer.local).map_err(|source| Error::Cache {
+        path: transfer.local.to_owned(),
         source,
     })?;
-    let meta = std::fs::metadata(local)
+    let meta = std::fs::metadata(transfer.local)
         .and_then(|meta| watch::Meta::of(&meta))
         .map_err(|source| Error::Cache {
-            path: local.to_owned(),
+            path: transfer.local.to_owned(),
             source,
         })?;
     tracing::debug!(bytes = fetched.bytes, "Remote folder archive fetched");
