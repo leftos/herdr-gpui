@@ -438,6 +438,31 @@ fn a_push_that_cannot_keep_the_file_s_access_says_nothing_changed() {
 }
 
 #[test]
+fn a_push_refused_in_a_shared_folder_says_nothing_changed() {
+    let host = FakeHost::new();
+    let (files, _, local) = fetched(&host);
+    let io = Io {
+        push: Arc::new(|_, _, _, _, _| {
+            Err(herdr_client::Error::RemoteFile(
+                herdr_client::RemoteFileError::SharedFolder,
+            ))
+        }),
+        ..files.io.clone()
+    };
+    let rule = (Expect::Any, RemoteFileAccess::Keep);
+    let Err(error) = push_copy(&io, &remote(PATH), &local, rule, 1024) else {
+        panic!("a push refused in a shared folder succeeded");
+    };
+    assert!(matches!(error, Error::SharedFolder), "{error:?}");
+    assert!(!error.is_conflict());
+    assert_eq!(
+        crate::Error::from(error).to_string(),
+        "Other users can replace files in that folder on the host, so it was not written in place; \
+         nothing was changed."
+    );
+}
+
+#[test]
 fn the_remote_copies_are_listed_with_their_state() {
     let host = FakeHost::new();
     let (mut files, key, local) = fetched(&host);

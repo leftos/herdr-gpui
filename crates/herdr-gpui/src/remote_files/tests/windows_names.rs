@@ -64,8 +64,27 @@ fn other_clients_keep_every_host_name() {
 fn the_renamed_copy_still_belongs_to_the_host_s_path() {
     let root = tempfile::tempdir().unwrap();
     let cache = Cache::create(root.path()).unwrap();
-    let copy = cache.copy_path(Owner(1), "me@devbox", "/home/me/a:b.txt");
+    let posix = RemoteShell::Posix;
+    let copy = cache.copy_path(Owner(1), "me@devbox", "/home/me/a:b.txt", posix);
     let expected = if cfg!(windows) { "a_b.txt" } else { "a:b.txt" };
     assert_eq!(copy.file_name().unwrap(), expected);
-    assert_eq!(basename("/home/me/a:b.txt"), "a:b.txt", "the host's name");
+    assert_eq!(
+        basename("/home/me/a:b.txt", posix),
+        "a:b.txt",
+        "the host's name"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_client_renames_a_posix_name_holding_a_backslash() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = Cache::create(root.path()).unwrap();
+    let copy = cache.copy_path(
+        Owner(1),
+        "me@devbox",
+        "/srv/foo\\bar.txt",
+        RemoteShell::Posix,
+    );
+    assert_eq!(copy.file_name().unwrap(), "foo_bar.txt");
 }
