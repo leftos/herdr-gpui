@@ -289,6 +289,122 @@ fn push_keeps_an_existing_files_group() {
     assert_eq!(entries(fixture.home.path()), ["file"]);
 }
 
+// BSD `stat -f %Lp` reports only the rwx bits, so a BSD host drops the special bits on every rename.
+#[cfg(target_os = "linux")]
+#[test]
+fn push_keeps_a_set_user_id_bit_it_can_keep() {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    fixture.set_mode("file", 0o4755);
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(fixture.mode("file"), 0o4755);
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
+/// A `stat` that reports a foreign owner for every path but the push's own
+/// copy, so a test can act as a push over a file another account owns.
+fn foreign_owner(fixture: &mut Fixture) -> tempfile::TempDir {
+    let body = format!(
+        "case \"$1 $2\" in\n'-c %u'|'-f %u')\n\
+         for last; do :; done\n\
+         case $last in */f.*) ;; *) printf '%s\\n' 4242; exit 0 ;; esac ;;\n\
+         esac\nexec '{}' \"$@\"\n",
+        real_tool("stat").display()
+    );
+    fixture.shim("stat", &body)
+}
+
+#[test]
+fn push_clears_a_set_user_id_bit_when_the_owner_changes() {
+    let mut fixture = Fixture::new();
+    let _bin = foreign_owner(&mut fixture);
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    fixture.set_mode("file", 0o4755);
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(fixture.mode("file"), 0o755);
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
+#[test]
+fn push_like_clears_a_set_user_id_bit_when_the_source_has_another_owner() {
+    let mut fixture = Fixture::new();
+    let _bin = foreign_owner(&mut fixture);
+    std::fs::write(fixture.path("source"), b"old").unwrap();
+    fixture.set_mode("source", 0o4755);
+    fixture
+        .push_like(&fixture.text("new"), &fixture.text("source"), b"mine")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path("new")).unwrap(), b"mine");
+    assert_eq!(fixture.mode("new"), 0o755);
+    assert_eq!(entries(fixture.home.path()), ["new", "source"]);
+}
+
+#[test]
+fn push_clears_a_set_group_id_bit_when_it_cannot_keep_the_group() {
+    let mut fixture = Fixture::new();
+    let _bin = fixture.fail_chgrp();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    // `chown` clears the special bits, so the mode is set after the group.
+    give_another_group(&fixture.path("file"));
+    fixture.set_mode("file", 0o2755);
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(fixture.mode("file"), 0o755);
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
+// BSD `stat -f %Lp` reports only the rwx bits, so a BSD host drops the special bits on every rename.
+#[cfg(target_os = "linux")]
+#[test]
+fn push_keeps_a_set_group_id_bit_it_can_keep() {
+    use std::os::unix::fs::MetadataExt;
+    let fixture = Fixture::new();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    // `chown` clears the special bits, so the mode is set after the group.
+    let group = give_another_group(&fixture.path("file"));
+    fixture.set_mode("file", 0o2755);
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_eq!(fixture.mode("file"), 0o2755);
+    assert_eq!(
+        std::fs::metadata(fixture.path("file")).unwrap().gid(),
+        group
+    );
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
+#[test]
+fn push_clears_a_set_user_id_bit_of_another_owners_file() {
+    use std::os::unix::fs::MetadataExt;
+    if output_of("id", &["-u"]) != "0" {
+        eprintln!("skipped: needs root");
+        return;
+    }
+    let fixture = Fixture::new();
+    let path = fixture.path("file");
+    std::fs::write(&path, b"old").unwrap();
+    // `chown` clears the special bits, so the mode is set after the owner.
+    std::os::unix::fs::chown(&path, Some(65534), None).unwrap();
+    fixture.set_mode("file", 0o4755);
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(std::fs::metadata(&path).unwrap().uid(), 0);
+    assert_eq!(fixture.mode("file"), 0o755);
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
 #[test]
 fn push_renames_without_the_group_only_when_group_and_other_bits_match() {
     use std::os::unix::fs::MetadataExt;

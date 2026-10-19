@@ -23,10 +23,13 @@
 //! host offers no lock that every editor honours.
 //!
 //! An existing file keeps its permission bits and, on a POSIX host, its
-//! group, and becomes the SSH user's. On a POSIX host it is overwritten in
-//! place instead, keeping its owner, group, and ACL but not atomically, when
-//! the host cannot report its mode or group, when an ACL shows on the file or
-//! on the temporary file, or when the copy cannot be given the file's group
+//! group, and becomes the SSH user's. A set-user-ID bit is not kept when the
+//! file's owner changes, nor a set-group-ID bit when its group cannot be
+//! kept: the file then grants no identity it did not grant before. On a
+//! POSIX host it is overwritten in place instead, keeping its owner, group,
+//! and ACL but not atomically, when the host cannot report its mode or
+//! group, when an ACL shows on the file or on the temporary file, or when
+//! the copy cannot be given the file's group
 //! and the group and other bits differ. When it would write in place over a
 //! file the SSH user cannot write, it refuses with [`Error::Access`] before
 //! the host's file changes. It writes in place only in a folder where no one
