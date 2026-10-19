@@ -186,6 +186,12 @@ fn absent_check() -> String {
 /// and other bits are identical: otherwise members of the old group who are
 /// not in the copy's would fall into "other" and gain or lose access.
 ///
+/// A set-user-ID bit is kept only when the copy's owner is `$like`'s owner:
+/// when either owner cannot be read, or they differ, the bit is dropped, so
+/// the file never runs as an account it did not before. A set-group-ID bit
+/// is dropped the same way when `chgrp` fails and the copy keeps its own
+/// group. Sticky stays: on a regular file it names no owner or group.
+///
 /// The access is not kept when it cannot be read or copied: `$like` is a
 /// symbolic link or not a regular file (GNU `stat` reads a link as 777, and a
 /// folder has a mode of its own), no `stat` reads the mode or group, `ls -ld`
@@ -218,6 +224,9 @@ case $mode in ''|*[!0-7]*) mode= ;; esac
 group=$(stat -c %g -- "$like" 2>/dev/null) || group=$(stat -f %g -- "$like" 2>/dev/null) || group=
 case $group in ''|*[!0-9]*) group= ;; esac
 tmp_group=$(stat -c %g -- "$copy" 2>/dev/null) || tmp_group=$(stat -f %g -- "$copy" 2>/dev/null) || tmp_group=
+owner=$(stat -c %u -- "$like" 2>/dev/null) || owner=$(stat -f %u -- "$like" 2>/dev/null) || owner=
+case $owner in ''|*[!0-9]*) owner= ;; esac
+tmp_owner=$(stat -c %u -- "$copy" 2>/dev/null) || tmp_owner=$(stat -f %u -- "$copy" 2>/dev/null) || tmp_owner=
 if [ -n "$mode" ] && [ -n "$group" ]; then keep=1; fi
 if [ -L "$like" ] || [ ! -f "$like" ]; then keep=; fi
 for listed in "$like" "$copy"; do
@@ -228,10 +237,17 @@ done
 if [ -n "$keep" ] && [ "$group" != "$tmp_group" ] && ! chgrp -- "$group" "$copy" 2>/dev/null; then
 g=$(( (0$mode >> 3) & 7 ))
 o=$(( 0$mode & 7 ))
-if [ "$g" -ne "$o" ]; then keep=; fi
+if [ "$g" -ne "$o" ]; then
+keep=
+else
+mode=$(printf '%o' $(( 0$mode & ~02000 )))
+fi
 fi
 fi
 if [ -n "$keep" ]; then
+if [ -z "$owner" ] || [ -z "$tmp_owner" ] || [ "$owner" != "$tmp_owner" ]; then
+mode=$(printf '%o' $(( 0$mode & ~04000 )))
+fi
 chmod -- "$mode" "$copy" || exit 1
 elif [ -e "$target" ]; then
 {absent}
