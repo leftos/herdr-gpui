@@ -90,10 +90,16 @@ impl HerdrWindow {
         let Some((target, path)) = &self.menu.remote_file else {
             return div();
         };
+        let Some(copy) = self.remote_files.copy(target, path) else {
+            return div();
+        };
         let theme = &self.theme;
         div()
             .debug_selector(|| "remote-upload".into())
-            .child(title(format!("Upload your changes to {}?", basename(path))))
+            .child(title(format!(
+                "Upload your changes to {}?",
+                basename(path, copy.shell)
+            )))
             .child(
                 div().px(px(8.)).child(
                     div()
@@ -135,9 +141,15 @@ impl HerdrWindow {
         let Some((target, path)) = &self.menu.remote_file else {
             return div();
         };
+        let Some(copy) = self.remote_files.copy(target, path) else {
+            return div();
+        };
         div()
             .debug_selector(|| "remote-conflict".into())
-            .child(title(format!("{} changed on {target}", basename(path))))
+            .child(title(format!(
+                "{} changed on {target}",
+                basename(path, copy.shell)
+            )))
             .child(muted(
                 self.theme.muted,
                 "It changed since it was fetched, so your save was not uploaded.",

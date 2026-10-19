@@ -13,7 +13,11 @@ fn a_save_as_the_fetched_copy_lands_asks_to_be_uploaded() {
     let host = FakeHost::new();
     let mut files = RemoteFiles::default();
     host.serve(&mut files, notes);
-    files.io.renamed = Arc::new(|local| std::fs::write(local, EDITED).unwrap());
+    files.io.step = Arc::new(|step, local| {
+        if step == Step::Placed {
+            std::fs::write(local, EDITED).unwrap();
+        }
+    });
     let done = fetch_fresh(&files.io, files.owner, &remote(PATH)).unwrap();
     assert_eq!(
         done.copy.synced_meta.len,

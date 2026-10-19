@@ -113,17 +113,33 @@ pub(crate) struct Io {
     cache: CacheSource,
     fetch: Fetcher,
     push: Pusher,
-    /// Runs as soon as a fetch's copy is renamed into place, so a test can
-    /// save to it then.
+    /// Runs at each step of putting a fetched copy in place, with the
+    /// copy's path, so a test can save to it then.
     #[cfg(test)]
-    renamed: Arc<dyn Fn(&Path) + Send + Sync>,
+    step: StepHook,
+}
+
+/// What a test runs at each [`Step`], with the copy's path.
+#[cfg(test)]
+type StepHook = Arc<dyn Fn(Step, &Path) + Send + Sync>;
+
+/// A step of putting a fetched copy in place that a test can save at.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// The copy was checked for saves since it was synced.
+    Checked,
+    /// The copy was moved aside, leaving its place empty.
+    MovedAside,
+    /// The host's bytes are at the copy's place.
+    Placed,
 }
 
 impl Default for Io {
     fn default() -> Self {
         Self {
             #[cfg(test)]
-            renamed: Arc::new(|_| {}),
+            step: Arc::new(|_, _| {}),
             cache: Arc::new(cache::shared),
             // The scripts' idle timeout ends a transfer that stalls.
             fetch: Arc::new(|remote, out| {
@@ -211,7 +227,8 @@ pub(crate) struct RemoteFiles {
     /// The cache the copies are in, once one was written.
     cache: Option<Arc<Cache>>,
     copies: HashMap<Key, CachedCopy>,
-    /// The copies a click's fetch is writing.
+    /// The copies a click's fetch or a conflict's refetch is writing, which
+    /// nothing else touches until it is done.
     fetching: HashSet<Key>,
     io: Io,
     /// When the last watch run started.
@@ -349,11 +366,11 @@ impl RemoteFiles {
     }
 
     /// The copies a watch run looks at: all but those a transfer is
-    /// rewriting or reading.
+    /// rewriting or reading, or a fetch is writing.
     fn probes(&self) -> Vec<watch::Probe> {
         self.copies
             .iter()
-            .filter(|(_, copy)| !transferring(copy.state))
+            .filter(|(key, copy)| !transferring(copy.state) && !self.fetching.contains(*key))
             .map(|(key, copy)| watch::Probe {
                 key: key.clone(),
                 local: copy.local.clone(),
@@ -368,6 +385,10 @@ impl RemoteFiles {
     fn apply_scan(&mut self, seen: Vec<watch::Seen>) -> Vec<(Key, sync::Action)> {
         let mut actions = Vec::new();
         for seen in seen {
+            // A fetch writing the copy now owns it until it is done.
+            if self.fetching.contains(&seen.key) {
+                continue;
+            }
             let Some(copy) = self.copies.get_mut(&seen.key) else {
                 continue;
             };
@@ -457,9 +478,11 @@ enum Fetch {
 }
 
 /// Fetches `remote` into `owner`'s copy of it in the cache: written beside
-/// it first and renamed over it once whole, so a failed fetch leaves any
+/// it first and put in its place once whole, so a failed fetch leaves any
 /// older copy as it was. With `keep_edits_since`, the copy's metadata when
-/// it was last synced, a copy saved since then is left as it is. Blocking.
+/// it was last synced, a copy saved since then is left as it is, however
+/// late the save comes (`swap_in`); without it the copy is replaced.
+/// Blocking.
 fn fetch_copy(
     io: &Io,
     owner: Owner,
@@ -467,7 +490,7 @@ fn fetch_copy(
     keep_edits_since: Option<watch::Meta>,
 ) -> Result<Fetch> {
     let cache = (io.cache)()?;
-    let local = cache.copy_path(owner, &remote.target, &remote.path);
+    let local = cache.copy_path(owner, &remote.target, &remote.path, remote.shell);
     if let Some(folder) = local.parent() {
         cache::create_private_dirs(folder)?;
     }
@@ -480,6 +503,8 @@ fn fetch_copy(
         remove_part(&part);
         return Ok(Fetch::KeptEdits);
     }
+    #[cfg(test)]
+    (io.step)(Step::Checked, &local);
     // Read from the whole part, whose modification time and length the
     // rename keeps: a save made as the copy lands then differs from it.
     let synced_meta = std::fs::metadata(&part)
@@ -489,14 +514,13 @@ fn fetch_copy(
             source,
         })
         .inspect_err(|_| remove_part(&part))?;
-    std::fs::rename(&part, &local)
-        .map_err(|source| Error::Cache {
-            path: local.clone(),
-            source,
-        })
-        .inspect_err(|_| remove_part(&part))?;
-    #[cfg(test)]
-    (io.renamed)(&local);
+    let placed = match keep_edits_since {
+        Some(synced) => swap_in(io, &part, &local, synced),
+        None => replace(io, &part, &local),
+    };
+    if placed.inspect_err(|_| remove_part(&part))? == Placed::KeptEdits {
+        return Ok(Fetch::KeptEdits);
+    }
     let opened = crate::window::opened(&local).and_then(|path| url::Url::from_file_path(path).ok());
     Ok(Fetch::Written(Box::new(Done {
         key: (remote.target.clone(), remote.path.clone()),
@@ -524,6 +548,145 @@ fn edited_since(local: &Path, synced: watch::Meta) -> Result<bool> {
             path: local.to_owned(),
             source,
         }),
+    }
+}
+
+/// Whether a fetch put the host's bytes in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placed {
+    Written,
+    /// A save was found at the copy's place, and stays there.
+    KeptEdits,
+}
+
+/// Renames the whole `part` over the copy at `local`, whatever it holds.
+fn replace(io: &Io, part: &Path, local: &Path) -> Result<Placed> {
+    #[cfg(not(test))]
+    let _ = io;
+    std::fs::rename(part, local).map_err(|source| cache_error(local, source))?;
+    #[cfg(test)]
+    (io.step)(Step::Placed, local);
+    Ok(Placed::Written)
+}
+
+/// Puts the whole `part` at `local` without ever replacing a save there.
+/// The copy moves aside first, the part is linked into the place it left,
+/// which fails rather than replace a save that took the place meanwhile,
+/// and the copy moved aside then comes back over the host's bytes unless
+/// its metadata proves it is still the one synced at `synced`. An editor
+/// holding the copy open without letting it be renamed fails the fetch.
+fn swap_in(io: &Io, part: &Path, local: &Path, synced: watch::Meta) -> Result<Placed> {
+    #[cfg(not(test))]
+    let _ = io;
+    let kept = cache::kept_path(local);
+    let kept = match std::fs::rename(local, &kept) {
+        Ok(()) => Some(kept),
+        // No copy, so nothing to keep.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => return Err(cache_error(local, source)),
+    };
+    #[cfg(test)]
+    (io.step)(Step::MovedAside, local);
+    match place(part, local) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // A save took the place in the gap: it stays, and the host's
+            // bytes are dropped.
+            remove_part(part);
+            if let Some(kept) = &kept {
+                discard_if_synced(kept, synced);
+            }
+            return Ok(Placed::KeptEdits);
+        }
+        Err(source) => {
+            if let Some(kept) = &kept {
+                put_back(kept, local, synced);
+            }
+            return Err(cache_error(local, source));
+        }
+    }
+    #[cfg(test)]
+    (io.step)(Step::Placed, local);
+    remove_part(part);
+    let Some(kept) = kept else {
+        return Ok(Placed::Written);
+    };
+    match meta_of(&kept) {
+        Ok(meta) if meta == synced => {
+            remove_kept(&kept);
+            return Ok(Placed::Written);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(%error, kept = %kept.display(), "Remote file copy moved aside not checked; keeping it");
+        }
+    }
+    // Saved after the check, or not proven unsaved: the save wins.
+    std::fs::rename(&kept, local).map_err(|source| {
+        tracing::warn!(kept = %kept.display(), "A save to a remote file copy was left beside it");
+        cache_error(local, source)
+    })?;
+    Ok(Placed::KeptEdits)
+}
+
+/// Links `part` in at `local`, failing with `AlreadyExists` rather than
+/// replace a file there. A filesystem without hard links gets a rename
+/// instead, which replaces a save made in the moment before it; the copy
+/// moved aside is still checked afterwards.
+fn place(part: &Path, local: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(part, local) {
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            tracing::debug!(%error, copy = %local.display(), "No hard links in the remote file cache; renaming the copy into place");
+            std::fs::rename(part, local)
+        }
+        linked => linked,
+    }
+}
+
+/// Puts the copy moved aside to `kept` back at `local` after a failed
+/// fetch. A save that took the place meanwhile stays there.
+fn put_back(kept: &Path, local: &Path, synced: watch::Meta) {
+    match place(kept, local) {
+        Ok(()) => remove_kept(kept),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            discard_if_synced(kept, synced);
+        }
+        Err(error) => {
+            tracing::warn!(%error, kept = %kept.display(), "Remote file copy not put back after a failed fetch");
+        }
+    }
+}
+
+/// Removes the copy moved aside to `kept` when its metadata proves it the
+/// one synced at `synced`; one that may hold a save stays beside the copy.
+fn discard_if_synced(kept: &Path, synced: watch::Meta) {
+    match meta_of(kept) {
+        Ok(meta) if meta == synced => remove_kept(kept),
+        Ok(_) => {
+            tracing::warn!(kept = %kept.display(), "A save to a remote file copy was left beside it")
+        }
+        Err(error) => {
+            tracing::warn!(%error, kept = %kept.display(), "Remote file copy moved aside not checked; keeping it");
+        }
+    }
+}
+
+fn meta_of(path: &Path) -> std::io::Result<watch::Meta> {
+    std::fs::metadata(path).and_then(|metadata| watch::Meta::of(&metadata))
+}
+
+fn cache_error(path: &Path, source: std::io::Error) -> Error {
+    Error::Cache {
+        path: path.to_owned(),
+        source,
+    }
+}
+
+fn remove_kept(kept: &Path) {
+    if let Err(error) = std::fs::remove_file(kept)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(%error, kept = %kept.display(), "Remote file copy moved aside not removed");
     }
 }
 
@@ -559,7 +722,7 @@ impl HerdrWindow {
         if !self.remote_files.fetching.insert(key.clone()) {
             return;
         }
-        let name = basename(&remote.path);
+        let name = basename(&remote.path, remote.shell);
         self.show_flash(
             Flash::success(format!("Fetching {name} from {}…", remote.target)),
             cx,

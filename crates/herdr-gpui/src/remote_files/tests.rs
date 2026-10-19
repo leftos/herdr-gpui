@@ -6,6 +6,7 @@ use std::sync::Mutex;
 mod answers;
 mod dismissed_conflict;
 mod fetch_meta;
+mod fetch_swap;
 mod fetches;
 mod saves;
 mod windows_names;
@@ -95,7 +96,7 @@ impl FakeHost {
         let replies = self.push_replies.clone();
         let received = self.received.clone();
         Io {
-            renamed: Arc::new(|_| {}),
+            step: Arc::new(|_, _| {}),
             cache: Arc::new(move || Ok(cache.clone())),
             fetch: Arc::new(move |remote, out| {
                 asked.lock().unwrap().push(remote.clone());
@@ -187,10 +188,12 @@ fn window<'a>(
 
 #[test]
 fn a_copy_is_named_after_the_host_s_file() {
-    assert_eq!(basename(r"C:\dev\notes.md"), "notes.md");
-    assert_eq!(basename("/home/me/src/main.rs"), "main.rs");
-    assert_eq!(basename(r"~\a/b\Makefile"), "Makefile");
-    assert_eq!(basename("README"), "README");
+    let (windows, posix) = (RemoteShell::PowerShell, RemoteShell::Posix);
+    assert_eq!(basename(r"C:\dev\notes.md", windows), "notes.md");
+    assert_eq!(basename("/home/me/src/main.rs", posix), "main.rs");
+    assert_eq!(basename("/home/me/src/main.rs", windows), "main.rs");
+    assert_eq!(basename(r"~\a/b\Makefile", windows), "Makefile");
+    assert_eq!(basename("README", posix), "README");
     for odd in [
         "/home/me/",
         r"C:\dev\",
@@ -201,8 +204,20 @@ fn a_copy_is_named_after_the_host_s_file() {
         "~",
     ] {
         let expected = if odd == "~" { "~" } else { "file" };
-        assert_eq!(basename(odd), expected, "{odd:?}");
+        assert_eq!(basename(odd, windows), expected, "{odd:?}");
     }
+}
+
+#[test]
+fn a_copy_s_name_splits_at_the_host_s_own_separators() {
+    assert_eq!(
+        basename("/srv/foo\\bar.txt", RemoteShell::Posix),
+        "foo\\bar.txt",
+        "a backslash is part of a POSIX name"
+    );
+    assert_eq!(basename(r"C:\a\b.txt", RemoteShell::PowerShell), "b.txt");
+    assert_eq!(basename("/srv/foo\\", RemoteShell::Posix), "foo\\");
+    assert_eq!(basename("/srv/foo\\", RemoteShell::PowerShell), "file");
 }
 
 #[test]
@@ -210,18 +225,19 @@ fn copies_are_kept_apart_by_host_and_path() {
     let host = FakeHost::new();
     let cache = &host.cache;
     let (owner, another) = (Owner::default(), Owner::default());
-    let copy = cache.copy_path(owner, "me@devbox", "/a/notes.md");
+    let posix = RemoteShell::Posix;
+    let copy = cache.copy_path(owner, "me@devbox", "/a/notes.md", posix);
     assert_eq!(
         copy,
-        cache.copy_path(owner, "me@devbox", "/a/notes.md"),
+        cache.copy_path(owner, "me@devbox", "/a/notes.md", posix),
         "stable"
     );
     assert!(copy.starts_with(cache.launch()));
     assert_eq!(copy.file_name().unwrap(), "notes.md");
     let others = [
-        cache.copy_path(owner, "me@other", "/a/notes.md"),
-        cache.copy_path(owner, "me@devbox", "/b/notes.md"),
-        cache.copy_path(another, "me@devbox", "/a/notes.md"),
+        cache.copy_path(owner, "me@other", "/a/notes.md", posix),
+        cache.copy_path(owner, "me@devbox", "/b/notes.md", posix),
+        cache.copy_path(another, "me@devbox", "/a/notes.md", posix),
     ];
     for other in &others {
         assert_ne!(&copy, other);
