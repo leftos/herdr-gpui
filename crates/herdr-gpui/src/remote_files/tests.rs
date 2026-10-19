@@ -7,6 +7,7 @@ mod answers;
 mod dismissed_conflict;
 mod fetch_meta;
 mod fetches;
+mod queries;
 mod saves;
 mod windows_names;
 
@@ -41,7 +42,7 @@ pub(crate) fn cut_off() -> herdr_client::Result<()> {
 
 /// A fetch into a cache that keeps no edits, which always writes the copy.
 fn fetch_fresh(io: &Io, owner: Owner, remote: &RemotePath) -> Result<Done> {
-    fetch_copy(io, owner, remote, None).map(|fetch| match fetch {
+    fetch_copy(io, owner, remote, None, None).map(|fetch| match fetch {
         Fetch::Written(done) => *done,
         Fetch::KeptEdits => panic!("a fetch keeping no edits kept some"),
     })

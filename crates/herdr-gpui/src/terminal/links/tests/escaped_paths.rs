@@ -45,6 +45,7 @@ fn every_cell_of_a_pasted_path_links_to_the_original_name() {
                 RowTarget::Path {
                     path: name.into(),
                     line: None,
+                    query: None,
                     explicit: false,
                 },
                 "{text} at {column}"

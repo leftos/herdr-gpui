@@ -444,7 +444,8 @@ struct Done {
     key: Key,
     copy: CachedCopy,
     cache: Arc<Cache>,
-    /// The copy, or the folder holding it when it is not a document.
+    /// The copy, with the link's query when it is a page, or the folder
+    /// holding it when it is not a document.
     opened: Option<url::Url>,
 }
 
@@ -459,12 +460,15 @@ enum Fetch {
 /// Fetches `remote` into `owner`'s copy of it in the cache: written beside
 /// it first and renamed over it once whole, so a failed fetch leaves any
 /// older copy as it was. With `keep_edits_since`, the copy's metadata when
-/// it was last synced, a copy saved since then is left as it is. Blocking.
+/// it was last synced, a copy saved since then is left as it is. `query` is
+/// the `?query` or `#fragment` a click's link printed after the path, which
+/// a page's copy opens with. Blocking.
 fn fetch_copy(
     io: &Io,
     owner: Owner,
     remote: &RemotePath,
     keep_edits_since: Option<watch::Meta>,
+    query: Option<&str>,
 ) -> Result<Fetch> {
     let cache = (io.cache)()?;
     let local = cache.copy_path(owner, &remote.target, &remote.path);
@@ -497,7 +501,7 @@ fn fetch_copy(
         .inspect_err(|_| remove_part(&part))?;
     #[cfg(test)]
     (io.renamed)(&local);
-    let opened = crate::window::opened(&local).and_then(|path| url::Url::from_file_path(path).ok());
+    let opened = crate::window::opened_url(&local, query);
     Ok(Fetch::Written(Box::new(Done {
         key: (remote.target.clone(), remote.path.clone()),
         copy: CachedCopy {
@@ -543,14 +547,20 @@ fn remove_part(part: &Path) {
 impl HerdrWindow {
     /// Fetches the host's file `remote` names into the cache and opens the
     /// copy with the system's default application, or says why it could not.
-    /// A copy in conflict is reopened, and its question asked again.
-    pub(crate) fn open_remote_file(&mut self, remote: RemotePath, cx: &mut Context<Self>) {
+    /// A copy in conflict is reopened, and its question asked again. A page
+    /// opens with `query`, the `?query` or `#fragment` printed after its path.
+    pub(crate) fn open_remote_file(
+        &mut self,
+        remote: RemotePath,
+        query: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if !self.remote_files.fetch_again(&remote) {
             let shown = self.shown_remote_file_prompt();
             let key = (remote.target.clone(), remote.path.clone());
             self.remote_files.reask_conflict(key, shown.as_ref());
             if let Some(copy) = self.remote_files.copy(&remote.target, &remote.path) {
-                self.open_in_system_app(copy.local.clone(), cx);
+                self.open_in_system_app(copy.local.clone(), query, cx);
             }
             return;
         }
@@ -570,32 +580,41 @@ impl HerdrWindow {
             .remote_files
             .copy(&remote.target, &remote.path)
             .map(|copy| copy.synced_meta);
+        let page_query = query.clone();
         let fetch = cx
             .background_executor()
-            .spawn(async move { fetch_copy(&io, owner, &remote, synced) });
+            .spawn(async move { fetch_copy(&io, owner, &remote, synced, page_query.as_deref()) });
         cx.spawn(async move |this, cx| {
             let fetched = fetch.await;
             // The window may have closed meanwhile; nothing opens then.
-            let _ = this.update(cx, |this, cx| this.remote_file_fetched(&key, fetched, cx));
+            let _ = this.update(cx, |this, cx| {
+                this.remote_file_fetched(&key, query, fetched, cx)
+            });
         })
         .detach();
     }
 
-    fn remote_file_fetched(&mut self, key: &Key, fetched: Result<Fetch>, cx: &mut Context<Self>) {
+    fn remote_file_fetched(
+        &mut self,
+        key: &Key,
+        query: Option<String>,
+        fetched: Result<Fetch>,
+        cx: &mut Context<Self>,
+    ) {
         self.remote_files.fetching.remove(key);
         match fetched {
             // Saved while the fetch ran: the copy with the save opens, and
             // the watch takes the save from there.
             Ok(Fetch::KeptEdits) => {
                 if let Some(copy) = self.remote_files.copies.get(key) {
-                    self.open_in_system_app(copy.local.clone(), cx);
+                    self.open_in_system_app(copy.local.clone(), query, cx);
                 }
             }
             Ok(Fetch::Written(done)) => {
                 let opened = done.opened.clone();
                 self.remote_files.record(*done);
                 match opened {
-                    Some(url) => cx.open_url(url.as_str()),
+                    Some(url) => self.open_file_url(url, cx),
                     None => tracing::warn!("Fetched remote file copy could not be opened"),
                 }
             }

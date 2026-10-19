@@ -4,6 +4,7 @@ fn link(path: &str, cwd: Option<&str>) -> FileLink {
     FileLink {
         path: path.into(),
         line: None,
+        query: None,
         pane_id: "pane".into(),
         cwd: cwd.map(Into::into),
         explicit: false,
@@ -22,6 +23,23 @@ fn powershell(path: &str) -> Option<(RemoteShell, String)> {
 
 fn posix(path: &str) -> Option<(RemoteShell, String)> {
     Some((RemoteShell::Posix, path.into()))
+}
+
+#[test]
+fn a_query_printed_after_the_path_is_not_the_host_s() {
+    let page = link("/srv/www/index.html", None);
+    let with_query = FileLink {
+        query: Some("?a=1".into()),
+        ..page.clone()
+    };
+    assert_eq!(
+        RemotePath::from_link(&with_query),
+        RemotePath::from_link(&page)
+    );
+    assert_eq!(
+        asked("/srv/www/index.html", None),
+        posix("/srv/www/index.html")
+    );
 }
 
 #[test]

@@ -55,6 +55,7 @@ mod copy_mode;
 mod daemon;
 #[cfg(feature = "daytona")]
 mod daytona;
+mod default_browser;
 mod devices_overview;
 mod diagnostics;
 mod dialog_input;

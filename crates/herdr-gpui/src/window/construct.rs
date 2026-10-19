@@ -151,6 +151,7 @@ impl HerdrWindow {
             configured_terminal_size,
             copy_mode: None,
             daemon_text: Default::default(),
+            default_browser: super::start_browser(),
             deliveries: Default::default(),
             detached_orchestrators: Default::default(),
             device_drag: None,
