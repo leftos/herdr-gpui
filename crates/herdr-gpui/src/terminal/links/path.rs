@@ -31,7 +31,9 @@ pub(super) struct PlainPath<'a> {
 /// after a backslash belongs to the path, as in the `/tmp/a\ b` a file drop
 /// or a shell's completion prints, except in a word that starts with a
 /// drive, such as `C:\Users\me`, where every backslash is part of the path.
-pub(super) fn plain_path(text: &str, hit: usize) -> Option<PlainPath<'_>> {
+/// `windows_paths` says the pane's host writes Windows paths, whose
+/// backslashes separate folders when a `?query` or `#fragment` is split off.
+pub(super) fn plain_path(text: &str, hit: usize, windows_paths: bool) -> Option<PlainPath<'_>> {
     let mut start = 0;
     let mut end = text.len();
     let mut drive = drive_path(text);
@@ -59,7 +61,7 @@ pub(super) fn plain_path(text: &str, hit: usize) -> Option<PlainPath<'_>> {
     if hit < start || hit >= start + token.len() {
         return None;
     }
-    let (named, query) = split_suffix(token, drive)?;
+    let (named, query) = split_suffix(token, drive || windows_paths)?;
     let (located, line) = without_location(named);
     let line = line.or_else(|| query.and_then(fragment_line));
     let (path, separators): (_, &[char]) = if drive {
@@ -173,7 +175,7 @@ fn anchor(fragment: &str) -> bool {
 
 /// The line a `#L10` or `#L10-L20` fragment at the end of `suffix` names:
 /// the first of the range.
-fn fragment_line(suffix: &str) -> Option<u32> {
+pub(super) fn fragment_line(suffix: &str) -> Option<u32> {
     let (_, fragment) = suffix.split_once('#')?;
     let lines = fragment.strip_prefix('L')?;
     let number = |digits: &str| {

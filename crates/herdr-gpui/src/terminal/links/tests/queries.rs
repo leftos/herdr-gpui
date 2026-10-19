@@ -122,9 +122,9 @@ fn a_query_does_not_hide_what_refuses_the_path_or_bound_its_length() {
     // The path part still names an `scp` host.
     assert_eq!(read("scp host:/p?x=1 now", 6), None);
     let long = format!("/a/b.html?x={} ok", "a".repeat(5000));
-    assert_eq!(path::plain_path(&long, 1), None);
+    assert_eq!(path::plain_path(&long, 1, false), None);
     let within = format!("/a/b.html?x={} ok", "a".repeat(4000));
-    let found = path::plain_path(&within, 1).unwrap();
+    let found = path::plain_path(&within, 1, false).unwrap();
     assert_eq!(found.path, "/a/b.html");
     assert_eq!(found.query.map(str::len), Some(4003));
 }
@@ -143,6 +143,54 @@ fn a_query_wrapped_raw_onto_the_next_row_joins_its_path() {
         }
     );
     assert_eq!(link.rows, vec![(0, 4..24), (1, 0..5)]);
+}
+
+/// What a one-row frame reads at `column` on a pane whose host writes
+/// Windows paths when `windows_paths` is set.
+fn read_on(text: &str, column: u16, windows_paths: bool) -> Option<Read> {
+    let reading = LinkReading {
+        raw_url_wraps: true,
+        windows_paths,
+    };
+    let bounds = Bounds {
+        columns: 0..60,
+        rows: 0..1,
+    };
+    let link = reading.frame_link(&frame(text, 60, 1), column, 0, &bounds)?;
+    let columns = columns(&link);
+    match link.target {
+        RowTarget::Path {
+            path, line, query, ..
+        } => Some((path, line, query, columns)),
+        RowTarget::Web(_)
+        | RowTarget::External(_)
+        | RowTarget::OtherHost(_)
+        | RowTarget::Malformed => None,
+    }
+}
+
+#[test]
+fn a_relative_windows_path_splits_its_query_on_a_windows_host() {
+    assert_eq!(
+        read_on(r"docs\index.html?x=1 ok", 1, true),
+        split(r"docs\index.html", None, Some("?x=1"), 0..19)
+    );
+    assert_eq!(
+        read_on(r"docs\guide.md#L10 ok", 1, true),
+        split(r"docs\guide.md", Some(10), Some("#L10"), 0..17)
+    );
+}
+
+#[test]
+fn a_backslash_escapes_as_before_on_a_posix_host() {
+    assert_eq!(
+        read_on(r"/tmp/a\?b ok", 1, false),
+        split("/tmp/a?b", None, None, 0..9)
+    );
+    assert_eq!(
+        read_on(r"docs\index.html?x=1 ok", 1, false),
+        split(r"docs\index.html?x=1", None, None, 0..19)
+    );
 }
 
 /// A `file://` address of a page, and the path it names here.
@@ -188,4 +236,41 @@ fn a_file_address_keeps_its_query_and_fragment_in_text_and_hyperlinks() {
     assert_eq!(target(&s), Some(RowTarget::Malformed));
     s.frame.hyperlinks = vec![format!("docs/a.html?x={}", "a".repeat(5000))];
     assert_eq!(target(&s), Some(RowTarget::Malformed));
+}
+
+/// A `file://` address of a source line, and the path it names here.
+#[cfg(unix)]
+const SOURCE: (&str, &str) = ("file:///tmp/m/main.rs#L10", "/tmp/m/main.rs");
+#[cfg(windows)]
+const SOURCE: (&str, &str) = ("file:///X:/m/main.rs#L10", r"X:\m\main.rs");
+
+#[test]
+fn a_file_address_or_hyperlink_takes_its_line_from_the_fragment() {
+    let (address, path) = SOURCE;
+    let source = |explicit| RowTarget::Path {
+        path: path.into(),
+        line: Some(10),
+        query: Some("#L10".into()),
+        explicit,
+    };
+    let text = format!("open {address} ok");
+    let plain = frame_link(&frame(&text, 60, 1), 6, 0, 0, 60).unwrap();
+    assert_eq!(plain.target, source(false));
+
+    let mut s = surface("report");
+    s.frame.cells[0].hyperlink = Some(0);
+    let target =
+        |s: &PaneSurfaceFrame| pane_link_at(s, 1., 1., 10., 20.).map(|link| link.link.target);
+    s.frame.hyperlinks = vec![address.into()];
+    assert_eq!(target(&s), Some(source(true)));
+    s.frame.hyperlinks = vec!["src/main.rs#L10-L20".into()];
+    assert_eq!(
+        target(&s),
+        Some(RowTarget::Path {
+            path: "src/main.rs".into(),
+            line: Some(10),
+            query: Some("#L10-L20".into()),
+            explicit: true,
+        })
+    );
 }

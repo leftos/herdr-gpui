@@ -36,7 +36,7 @@ const MAX_PATH_BYTES: usize = 4096;
 fn explicit_target(destination: &str) -> RowTarget {
     let named = |path: String, query: Option<String>| RowTarget::Path {
         path,
-        line: None,
+        line: query.as_deref().and_then(path::fragment_line),
         query,
         explicit: true,
     };
@@ -107,14 +107,14 @@ fn plain_address(text: &str) -> Option<RowTarget> {
     }
     match explicit_target(text) {
         RowTarget::External(url) if url.trusted() => Some(RowTarget::External(url)),
-        RowTarget::Path { path, query, .. } if text.starts_with("file://") => {
-            Some(RowTarget::Path {
-                path,
-                line: None,
-                query,
-                explicit: false,
-            })
-        }
+        RowTarget::Path {
+            path, line, query, ..
+        } if text.starts_with("file://") => Some(RowTarget::Path {
+            path,
+            line,
+            query,
+            explicit: false,
+        }),
         _ => None,
     }
 }
@@ -188,6 +188,10 @@ pub(crate) struct PaneLink {
 pub(crate) struct LinkReading {
     /// Whether an address joins a raw terminal wrap.
     pub(crate) raw_url_wraps: bool,
+    /// Whether the pane's host writes Windows paths, so a backslash in a
+    /// relative path separates folders when a `?query` or `#fragment` is
+    /// split off.
+    pub(crate) windows_paths: bool,
 }
 
 impl LinkReading {
@@ -335,7 +339,7 @@ impl LinkReading {
                 (range, open, target)
             }
             None => {
-                let found = path::plain_path(text, hit)?;
+                let found = path::plain_path(text, hit, self.windows_paths)?;
                 let target = RowTarget::Path {
                     path: found.path.into_owned(),
                     line: found.line,
