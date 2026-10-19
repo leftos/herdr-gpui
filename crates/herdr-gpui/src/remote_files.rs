@@ -60,6 +60,11 @@ pub enum Error {
     NoStateDir,
     #[error("Could not upload the file: {0}")]
     Push(#[source] herdr_client::Error),
+    #[error(
+        "Other users can replace files in that folder on the host, so it was not written in \
+         place; nothing was changed."
+    )]
+    SharedFolder,
     #[error("Not uploaded: the copy is larger than {} MB", .limit.div_ceil(MB))]
     TooLarge { limit: u64 },
     // keep-sorted end

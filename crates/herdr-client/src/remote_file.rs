@@ -29,7 +29,14 @@
 //! on the temporary file, or when the copy cannot be given the file's group
 //! and the group and other bits differ. When it would write in place over a
 //! file the SSH user cannot write, it refuses with [`Error::Access`] before
-//! the host's file changes.
+//! the host's file changes. It writes in place only in a folder where no one
+//! but the SSH user and root can replace the file (the folder is theirs,
+//! carries no ACL, and neither group nor others may write it unless it is
+//! sticky and the file is theirs); elsewhere it refuses with
+//! [`Error::SharedFolder`], and a push expecting nothing at the path refuses
+//! with [`Error::Conflict`] rather than write over a file that appeared.
+//! The POSIX copy is built in a private folder inside the target's folder,
+//! so no one else can swap it for a link before it is renamed.
 //!
 //! A new file takes the access of the file [`Access::Like`] names, as a
 //! kept-both copy does, or with [`Access::Keep`] what the host gives a new
@@ -85,6 +92,11 @@ const SHORT_EXIT: i32 = 70;
 /// target the SSH user cannot write, or PowerShell cannot read the ACL to
 /// copy or its source is not a file. The host's file was not changed.
 const ACCESS_EXIT: i32 = 71;
+/// Users other than the SSH user and root can replace files in the target's
+/// folder, so a POSIX push that could only write in place did not, or the
+/// push's private work folder was not the SSH user's alone. The host's file
+/// was not changed.
+const SHARED_FOLDER_EXIT: i32 = 72;
 /// The host's file no longer matches what the push expected.
 const CONFLICT_EXIT: i32 = 75;
 
@@ -151,6 +163,11 @@ pub enum Error {
     #[error("could not reach the host's file: {0}")]
     /// Boxed: the crate's root error holds this enum in turn.
     Script(#[source] Box<crate::Error>),
+    #[error(
+        "other users can replace files in that folder on the host, so it was not written in \
+         place; nothing was changed"
+    )]
+    SharedFolder,
     #[error("the host's path is a symbolic link, which is never replaced")]
     Symlink,
     #[error("the file is larger than {} MB", .limit.div_ceil(MB))]
@@ -223,7 +240,9 @@ pub fn fetch_remote_file(
 /// Errors:
 ///     [`crate::Error::RemoteFile`] for a refusal, a conflict, a transfer
 ///     that was not `len` bytes ([`Error::Incomplete`]), access it cannot
-///     keep ([`Error::Access`]), or a failed script, or a target or platform
+///     keep ([`Error::Access`]), an in-place write refused in a folder
+///     others can write ([`Error::SharedFolder`]), or a failed script, or a
+///     target or platform
 ///     error from [`crate::Error`].
 pub fn push_remote_file(
     file: RemoteFile<'_>,
@@ -308,6 +327,7 @@ fn classify(error: crate::Error, limit: Option<u64>) -> Error {
         (Some(NO_HASHER_EXIT), _) => Error::NoHasher,
         (Some(CONFLICT_EXIT), _) => Error::Conflict,
         (Some(ACCESS_EXIT), _) => Error::Access,
+        (Some(SHARED_FOLDER_EXIT), _) => Error::SharedFolder,
         (Some(SHORT_EXIT), _) => Error::Incomplete,
         _ => Error::Script(Box::new(error)),
     }

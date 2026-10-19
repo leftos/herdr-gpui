@@ -81,6 +81,9 @@ pub(crate) fn push_copy(
     let (sent, sha256) = reader.finish();
     pushed.map_err(|error| match error {
         herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::Access) => Error::Access,
+        herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::SharedFolder) => {
+            Error::SharedFolder
+        }
         error => Error::Push(error),
     })?;
     // The host refuses a short transfer; this holds a push that ignored it.
