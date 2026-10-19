@@ -334,6 +334,14 @@ project_roots = []
 # keybindings = "server"
 # theme = "Dracula"
 
+[remote_files]
+# Warn before copying a folder printed in an SSH pane when its contents exceed
+# this many megabytes uncompressed. 1..=4096.
+folder_warning_mb = 64
+# Refuse a folder whose archive is larger than this many megabytes. 1..=8192,
+# and never below folder_warning_mb.
+folder_transfer_cap_mb = 512
+
 # Preferences offers a searchable picker for all four families together or each row.
 # Platform default removes the local family override; fallback cascades remain active.
 [sidebar]

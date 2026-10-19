@@ -40,6 +40,7 @@ mod omarchy_theme;
 mod preferences;
 mod px0;
 mod remote;
+mod remote_files;
 mod repository_icons;
 mod sidebar_scope;
 mod sidebar_search;

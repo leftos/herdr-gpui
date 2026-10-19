@@ -252,6 +252,61 @@ impl SettingsWindow {
                         cx,
                     )),
             )
+            .child(ui::section(theme, "Links", None))
+            .child(self.folder_size_row(
+                cx,
+                "general-folder-warning",
+                "Warn above",
+                "Before copying a folder printed in an SSH pane, when its contents are \
+                 larger than this.",
+                NumberField::FolderWarningMb,
+                self.config.remote_files.folder_warning_mb as f32,
+            ))
+            .child(self.folder_size_row(
+                cx,
+                "general-folder-cap",
+                "Refuse above",
+                "A folder archive larger than this is not copied.",
+                NumberField::FolderTransferCapMb,
+                self.config.remote_files.folder_transfer_cap_mb as f32,
+            ))
+    }
+
+    /// One `[remote_files]` size row: a typed number in megabytes, no slider.
+    fn folder_size_row(
+        &self,
+        cx: &mut Context<Self>,
+        id: &'static str,
+        title: &'static str,
+        description: &'static str,
+        field: NumberField,
+        value: f32,
+    ) -> impl IntoElement {
+        let on_change = on_value(cx, move |this, change, _, cx| {
+            this.commit_number(field, change, cx)
+        });
+        let view = cx.entity().downgrade();
+        ui::row(&self.theme, id, title)
+            .tag(ui::Source::HerdrUi)
+            .description(description)
+            .control(ui::number(
+                &self.theme,
+                ui::Number {
+                    id: field.selector(),
+                    value,
+                    range: field.range(),
+                    unit: "MB",
+                    slider: false,
+                    enabled: true,
+                },
+                self.number_edit_for(field),
+                on_change,
+                move |window, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.begin_number_edit(field, value, window, cx)
+                    });
+                },
+            ))
     }
 
     /// Windows' **Launch at login**; other platforms have no such setting yet.

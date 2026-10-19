@@ -24,6 +24,8 @@ pub(in crate::settings_window) enum NumberField {
     SoundVolume,
     TerminalPadding(Axis, Side),
     RemotePort,
+    FolderWarningMb,
+    FolderTransferCapMb,
 }
 
 impl NumberField {
@@ -36,6 +38,8 @@ impl NumberField {
             Self::SoundVolume => "notif-volume-control",
             Self::TerminalPadding(axis, side) => padding_ids(axis, side).1,
             Self::RemotePort => "remote-port-control",
+            Self::FolderWarningMb => "general-folder-warning-control",
+            Self::FolderTransferCapMb => "general-folder-cap-control",
         }
     }
 
@@ -52,6 +56,8 @@ impl NumberField {
             Self::SoundVolume => 0.0..=f32::from(SoundConfig::MAX_VOLUME),
             Self::TerminalPadding(..) => 0.0..=MAX_PADDING,
             Self::RemotePort => 1.0..=f32::from(u16::MAX),
+            Self::FolderWarningMb => 1.0..=4096.0,
+            Self::FolderTransferCapMb => 1.0..=8192.0,
         }
     }
 }
@@ -288,6 +294,16 @@ impl SettingsWindow {
                 NumberField::RemotePort => {
                     let edit = crate::config::remote::Edit::Port(value as u16);
                     self.save_preference(Preference::Remote(edit), cx);
+                }
+                NumberField::FolderWarningMb => {
+                    if (value as u32) <= self.config.remote_files.folder_transfer_cap_mb {
+                        self.save_preference(Preference::FolderWarningMb(value as u32), cx);
+                    }
+                }
+                NumberField::FolderTransferCapMb => {
+                    if self.config.remote_files.folder_warning_mb <= value as u32 {
+                        self.save_preference(Preference::FolderTransferCapMb(value as u32), cx);
+                    }
                 }
                 NumberField::Spacing(_) => {}
             }
