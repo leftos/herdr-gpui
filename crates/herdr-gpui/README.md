@@ -2266,7 +2266,7 @@ to the right of the pane that printed it (see [Code Navigation](#code-navigation
 Folders, images, videos, and PDFs open with the system's default application
 instead, as does every file with `open_files_in = "system"`. Holding Alt
 (Option on macOS) as well opens a file in the other one. There, terminal output
-is untrusted, so a click never launches anything: only a plain folder or a
+is untrusted, so a click never launches anything: only a folder or a
 non-executable document (text, source, Markdown, JSON, images, PDF, and
 similar) opens itself, judged by where symlinks lead. An application, script,
 or unknown file type opens the folder that holds it, and a network path opens
@@ -2293,7 +2293,26 @@ private cache folder and opens the copy, under the same rule as a local file: a
 document opens in its default application, and anything else opens the folder
 holding the copy. Windows OpenSSH hosts are reached through Windows PowerShell
 5.1 or later, and other hosts through `/bin/sh`. Files up to 64 MB are fetched;
-a folder, a larger file, or a missing one shows why nothing opened.
+a larger file or a missing one shows why nothing opened.
+
+A folder printed there is copied the same way. The app first asks the host how
+large the folder's contents are, then fetches the folder as one archive — a
+gzipped tar stream on a POSIX host, a zip built on a Windows host — unpacks it
+into the cache and opens the unpacked folder. A folder whose contents exceed
+`remote_files.folder_warning_mb` (64 MB by default) asks first, with **Transfer
+anyway** and **Cancel**, and an archive larger than
+`remote_files.folder_transfer_cap_mb` (512 MB by default) is refused. Both
+numbers are set in Settings > General under Links, or as `[remote_files]` keys
+in `config-gpui.local.toml`.
+
+Clicking the folder again fingerprints the host's tree. An unchanged tree
+reopens the copy without transferring; a changed one offers **Re-fetch** or
+**Open existing**. Symbolic and hard links and other special entries are
+skipped inside the archive and counted, and the transfer says how many. An
+archive may hold at most 100,000 entries and expand to at most 2 GB, and every
+entry must be a plain path under the folder's own name; anything else is
+refused and nothing is unpacked. Folder copies live in the same cache as file
+copies and are removed when the app quits; they are never watched or uploaded.
 
 The copy is watched for saves. The first save asks whether to upload it:
 **Upload**, **Upload future saves without asking**, or **Not now**. Each

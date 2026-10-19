@@ -46,10 +46,25 @@ impl HerdrWindow {
             return;
         }
         let Some(prompt) = self.remote_files.next_prompt() else {
+            self.show_next_folder_prompt(window, cx);
             return;
         };
         if self.show_remote_file_prompt(&prompt, window, cx) {
             self.remote_files.prompts.pop_front();
+        }
+    }
+
+    /// Shows the next folder question when no page opened for a copy's own
+    /// question.
+    fn show_next_folder_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.page.is_some() {
+            return;
+        }
+        let Some(prompt) = self.remote_files.next_folder_prompt() else {
+            return;
+        };
+        if self.show_remote_folder_prompt(&prompt, window, cx) {
+            self.remote_files.take_folder_prompt(&prompt.remote);
         }
     }
 

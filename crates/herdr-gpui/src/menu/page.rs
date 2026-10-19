@@ -70,6 +70,8 @@ pub(crate) enum Page {
     /// A remote file's host changed since its copy was synced, so a save
     /// was not uploaded.
     RemoteConflict,
+    /// A remote folder is large or changed, and its copy asks what to do.
+    RemoteFolder,
     /// Asks before a save to a remote file's copy is uploaded.
     RemoteUpload,
     RemoveDevice,

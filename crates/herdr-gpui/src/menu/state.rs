@@ -70,6 +70,8 @@ pub(crate) struct MenuState {
     pub(super) open_link: Option<crate::terminal::ExternalUrl>,
     /// The copy the remote file questions are about.
     pub(super) remote_file: Option<crate::remote_files::Key>,
+    /// The folder question the window shows.
+    pub(crate) remote_folder: Option<crate::remote_files::FolderPrompt>,
     #[cfg(feature = "coder")]
     pub(super) coder: Option<super::devices::coder::Wizard>,
     pub(super) devices_scroll: ScrollHandle,
@@ -320,6 +322,7 @@ impl MenuState {
             open_checkout: None,
             open_link: None,
             remote_file: None,
+            remote_folder: None,
             #[cfg(feature = "coder")]
             coder: None,
             devices_scroll: ScrollHandle::new(),
@@ -393,6 +396,7 @@ impl MenuState {
         self.open_checkout = None;
         self.open_link = None;
         self.remote_file = None;
+        self.remote_folder = None;
         #[cfg(feature = "coder")]
         {
             self.coder = None;
