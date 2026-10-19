@@ -1,8 +1,10 @@
 //! The folder probe and archive scripts. A POSIX host runs them under
 //! `/bin/sh`; a Windows OpenSSH host runs them under Windows PowerShell. The
-//! probe prints a KiB count and a fingerprint; the archive streams a gzipped
-//! tar (POSIX) or a zip (PowerShell) of the folder to stdout. Both shells use
-//! the same exit-code contract as the file transfer scripts.
+//! probe prints a folder's size, a fingerprint of its tree, the name its
+//! archive's entries start with, and the entries its archive leaves out as
+//! links; the archive streams a gzipped tar (POSIX) or a zip (PowerShell) of
+//! the folder to stdout. Both shells use the same exit-code contract as the
+//! file transfer scripts.
 
 use super::{
     MISSING_EXIT, NOT_A_FILE_EXIT, TOO_LARGE_EXIT,
@@ -10,24 +12,37 @@ use super::{
     powershell::{PREAMBLE, path_expression},
 };
 
-/// The `/bin/sh` script that prints the folder's size in KiB and a SHA-256 of
-/// a sorted metadata listing of its tree, or `-` when the host has no SHA-256
-/// tool.
+/// The `/bin/sh` script that prints the folder's size in KiB, a SHA-256 of a
+/// sorted metadata listing of its tree (or `-` when the host has no SHA-256
+/// tool), the name its archive's entries start with, and `0` for the links
+/// its archive leaves out.
 pub(super) fn posix_probe_script(path: &str) -> String {
     format!(
         r#"{assign}
 if [ ! -e "$path" ]; then exit {MISSING_EXIT}; fi
 if [ ! -d "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
+while [ "${{path%/}}" != "$path" ]; do path=${{path%/}}; done
+if [ -z "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
+top=${{path##*/}}
 size=$(du -sk -- "$path" 2>/dev/null | cut -f1) || exit 1
 case $size in ''|*[!0-9]*) exit 1 ;; esac
 printf '%s\n' "$size"
 {hasher}
 if [ -n "$hasher" ]; then
-sum=$(find "$path" -exec ls -lnd -- {{}} + | LC_ALL=C sort | $hasher) || exit 1
+if stat -c '%n %s %y' -- "$path" >/dev/null 2>&1; then
+listing=$(find "$path" -exec stat -c '%n %s %y' -- {{}} +) || exit 1
+elif stat -f '%N %z %m' -- "$path" >/dev/null 2>&1; then
+listing=$(find "$path" -exec stat -f '%N %z %m' -- {{}} +) || exit 1
+else
+listing=$(find "$path" -exec ls -lnd -- {{}} +) || exit 1
+fi
+sum=$(printf '%s\n' "$listing" | LC_ALL=C sort | $hasher) || exit 1
 printf '%s\n' "${{sum%% *}}"
 else
 printf '%s\n' '-'
-fi"#,
+fi
+printf '%s\n' "$top"
+printf '%s\n' 0"#,
         assign = path_assignment(path),
         hasher = choose_hasher(None),
     )
@@ -51,10 +66,11 @@ exec tar -czf - -C "$dir" -- "$base""#,
     )
 }
 
-/// The PowerShell script that prints the folder's size in KiB and a SHA-256
-/// of its sorted metadata listing. Directories are walked with an explicit
-/// stack because `Get-ChildItem -Recurse` follows junctions on Windows
-/// PowerShell 5.1; reparse points are skipped here.
+/// The PowerShell script that prints the folder's size in KiB, a SHA-256 of
+/// its sorted metadata listing, the name its archive's entries start with, and
+/// the number of reparse points it skipped. Directories are walked with an
+/// explicit stack because `Get-ChildItem -Recurse` follows junctions on
+/// Windows PowerShell 5.1; reparse points are skipped here.
 pub(super) fn powershell_probe_script(path: &str) -> String {
     format!(
         r#"{PREAMBLE}
@@ -65,17 +81,29 @@ if (-not [System.IO.Directory]::Exists($path)) {{
 }}
 $root = [System.IO.Path]::GetFullPath($path).TrimEnd([char[]]@('\', '/'))
 if ($root -eq '') {{ $root = '/' }}
+$base = [System.IO.Path]::GetFileName($root)
+if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}
 $prefix = $root
 if ($root -ne '/') {{ $prefix = $root + [System.IO.Path]::DirectorySeparatorChar }}
 $directories = New-Object System.Collections.Stack
 $directories.Push($path)
 $entries = New-Object System.Collections.Generic.List[object]
 [long]$total = 0
+[int]$skipped = 0
 while ($directories.Count -gt 0) {{
     $directory = $directories.Pop()
+    $normalized = [System.IO.Path]::GetFullPath($directory).TrimEnd([char[]]@('\', '/'))
+    if ($normalized -ne $root) {{
+        $relativeDirectory = $normalized.Substring($prefix.Length).Replace('\', '/')
+        $entries.Add([pscustomobject]@{{
+            Relative = $relativeDirectory
+            FileLength = -1
+            Ticks = 0
+        }})
+    }}
     foreach ($item in [System.IO.Directory]::GetFileSystemEntries($directory)) {{
         $attributes = [System.IO.File]::GetAttributes($item)
-        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {{ continue }}
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {{ $skipped++; continue }}
         if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {{
             $directories.Push($item)
         }} else {{
@@ -103,7 +131,9 @@ try {{
     $sha.Dispose()
 }}
 Write-Output ([long][Math]::Ceiling([double]$total / 1024))
-Write-Output $digest"#,
+Write-Output $digest
+Write-Output $base
+Write-Output ([long]$skipped)"#,
         path = path_expression(path),
     )
 }
@@ -126,6 +156,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = [System.IO.Path]::GetFullPath($path).TrimEnd([char[]]@('\', '/'))
 if ($root -eq '') {{ $root = '/' }}
 $base = [System.IO.Path]::GetFileName($root)
+if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}
 $prefix = $root
 if ($root -ne '/') {{ $prefix = $root + [System.IO.Path]::DirectorySeparatorChar }}
 $zip = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName() + '.zip')
@@ -136,6 +167,11 @@ try {{
         $directories.Push($path)
         while ($directories.Count -gt 0) {{
             $directory = $directories.Pop()
+            $normalized = [System.IO.Path]::GetFullPath($directory).TrimEnd([char[]]@('\', '/'))
+            if ($normalized -ne $root) {{
+                $relative = $normalized.Substring($prefix.Length).Replace('\', '/')
+                [void]$archive.CreateEntry($base + '/' + $relative + '/')
+            }}
             foreach ($item in [System.IO.Directory]::GetFileSystemEntries($directory)) {{
                 $attributes = [System.IO.File]::GetAttributes($item)
                 if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {{ continue }}
