@@ -8,7 +8,7 @@
 //! are links by their shape alone. A WSL or cloud pane's paths are not read.
 //!
 //! Terminal output is untrusted, and a hyperlink's text need not match its
-//! target, so a click never launches anything. Only a plain folder or a
+//! target, so a click never launches anything. Only a folder or a
 //! regular, non-executable file of a known document type opens itself, judged
 //! by where any symlinks lead; anything else, from an application to a script
 //! the system might run, opens the folder that holds it. A network path,
@@ -170,10 +170,11 @@ fn real_path(path: &Path) -> Result<PathBuf, Unresolved> {
     Ok(resolved)
 }
 
-/// What a click on `path` opens, once symlinks are resolved: a plain folder
-/// or a document itself, and otherwise the nearest folder holding it that
-/// is not itself a bundle the system would launch. `None` when the path
-/// does not exist or leads to another machine. Reads the disk.
+/// What a click on `path` opens, once symlinks are resolved: a folder,
+/// whatever its name, or a document itself, and otherwise the nearest
+/// folder holding it that is not itself a bundle the system would launch.
+/// `None` when the path does not exist or leads to another machine. Reads
+/// the disk.
 pub(crate) fn opened(path: &Path) -> Option<PathBuf> {
     let real = real_path(path).ok()?;
     let metadata = std::fs::metadata(&real).ok()?;
@@ -181,8 +182,9 @@ pub(crate) fn opened(path: &Path) -> Option<PathBuf> {
         .extension()
         .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
     let opens = if metadata.is_dir() {
-        // A folder with an extension may be a bundle the system launches.
-        extension.is_none()
+        // A folder opens itself, so `Tool.app` is the bundle clicked, not
+        // the folder holding it.
+        true
     } else {
         // An extensionless file, such as `Makefile`, opens as text.
         metadata.is_file()
