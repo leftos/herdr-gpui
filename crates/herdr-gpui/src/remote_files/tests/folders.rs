@@ -156,8 +156,14 @@ fn a_click_on_a_remote_folder_copies_and_opens_it(cx: &mut TestAppContext) {
     assert_eq!(fingerprint, Some([7; 32]));
     assert_eq!(std::fs::read(local.join("notes.md")).unwrap(), b"notes");
     let opened = cx.opened_url().expect("the copy's folder opens");
-    let expected = url::Url::from_file_path(&local).unwrap();
-    assert_eq!(opened, expected.as_str(), "the copy's folder URL opens");
+    let opened = url::Url::parse(&opened).unwrap().to_file_path().unwrap();
+    // `opened` has symlinks resolved (macOS keeps temporary folders behind
+    // `/var -> /private/var`), so compare both sides resolved.
+    assert_eq!(
+        opened.canonicalize().unwrap(),
+        local.canonicalize().unwrap(),
+        "the copy's folder URL opens"
+    );
     view.read_with(cx, |view, _| {
         let listed: Vec<_> = view.remote_files.list().collect();
         assert_eq!(listed.len(), 1);
@@ -366,8 +372,11 @@ fn a_click_on_a_path_with_a_trailing_separator_opens_the_copy(cx: &mut TestAppCo
         .expect("the folder is copied");
     assert_eq!(local.file_name().unwrap(), "src");
     let opened = cx.opened_url().expect("the copy's folder opens");
-    let expected = url::Url::from_file_path(&local).unwrap();
-    assert_eq!(opened, expected.as_str());
+    let opened = url::Url::parse(&opened).unwrap().to_file_path().unwrap();
+    assert_eq!(
+        opened.canonicalize().unwrap(),
+        local.canonicalize().unwrap()
+    );
 }
 
 #[gpui::test]
