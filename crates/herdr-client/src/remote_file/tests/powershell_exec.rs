@@ -419,7 +419,11 @@ fn probes(fixture: &Fixture) {
     assert_eq!(first.top, tree);
     let fingerprint = first.fingerprint.expect("PowerShell always has SHA-256");
 
-    let trailing = fixture.probe(&format!("{}\\", fixture.text(tree)));
+    let trailing = fixture.probe(&format!(
+        "{}{}",
+        fixture.text(tree),
+        std::path::MAIN_SEPARATOR
+    ));
     assert_code(&trailing, 0);
     assert_eq!(parse_probe_output(&trailing.stdout).unwrap(), first);
 
