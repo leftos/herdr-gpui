@@ -335,6 +335,9 @@ impl HerdrWindow {
             "enter" if self.menu.page == Some(Page::OpenLink) => {
                 self.confirm_open_link(window, cx);
             }
+            "enter" if self.menu.page == Some(Page::OpenCheckout) => {
+                self.confirm_open_checkout(window, cx);
+            }
             "enter" if self.menu.page == Some(Page::RemoteUpload) => {
                 self.confirm_remote_upload(crate::remote_files::Answer::Upload, window, cx);
             }
