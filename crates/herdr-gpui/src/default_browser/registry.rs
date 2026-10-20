@@ -3,8 +3,8 @@
 //! `shell\open\command`.
 
 use super::{Error, Result, command_line, spawn};
-use windows::{Win32::Foundation::ERROR_FILE_NOT_FOUND, core::HRESULT};
 use windows_registry::{CLASSES_ROOT, CURRENT_USER, Key};
+use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 
 const ASSOCIATIONS: &str = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations";
 
@@ -40,7 +40,12 @@ fn prog_id() -> Result<String> {
 fn read(root: &Key, key: &str, value: &str) -> Result<Option<String>> {
     match root.open(key).and_then(|opened| opened.get_string(value)) {
         Ok(text) => Ok(Some(text)),
-        Err(error) if error.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) => Ok(None),
+        Err(error)
+            if windows_result::WIN32_ERROR::from_error(&error)
+                .is_some_and(|code| code.0 == ERROR_FILE_NOT_FOUND) =>
+        {
+            Ok(None)
+        }
         Err(source) => Err(Error::Registry {
             key: key.to_owned(),
             source,

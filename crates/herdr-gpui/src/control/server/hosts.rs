@@ -1,11 +1,11 @@
-//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, and
-//! `remote-files`: what the window gathers about its hosts, read from the
-//! state it already keeps. Nothing here starts a lookup, a scan, or a
-//! sample of its own; a request answers from the latest one, and says why
-//! when there is none.
+//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, `remote-files`, and
+//! `security`: what the window gathers about its hosts, read from the state it
+//! already keeps. Nothing here starts a lookup, a scan, or a sample of its own;
+//! a request answers from the latest one, and says why when there is none.
 mod ports;
 mod pr;
 mod remote_files;
+mod security;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +54,10 @@ pub(super) fn serve(
         HostOp::OpenPort { port } => return ports::open(call.caller, port, incoming, watches, cx),
         HostOp::Usage => in_window(caller, cx, |view, _, _| usage(view, SystemTime::now())),
         HostOp::System => in_window(caller, cx, |view, _, _| system(view)),
+        HostOp::Security => in_window(caller, cx, |view, _, _| security::alerts(view)),
+        HostOp::SecurityOpen { repository, item } => in_window(caller, cx, |view, window, cx| {
+            security::open(view, &repository, &item, window, cx)
+        }),
         HostOp::Cloud => cloud(caller, cx),
         HostOp::CloudSetup { id } => {
             in_free_window(caller, cx, |view, _, cx| cloud_setup(view, &id, cx))
@@ -236,7 +240,7 @@ fn system(view: &HerdrWindow) -> Response {
     let host = view
         .endpoints
         .get(view.selected_endpoint)
-        .and_then(|endpoint| crate::usage::Host::of(&endpoint.connection.target));
+        .and_then(|endpoint| crate::usage::Host::load_of(&endpoint.connection.target));
     let Some(host) = host else {
         return Response::Host {
             reply: Reply::System {

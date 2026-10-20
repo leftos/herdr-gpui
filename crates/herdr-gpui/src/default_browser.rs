@@ -43,7 +43,7 @@ pub enum Error {
     Registry {
         key: String,
         #[source]
-        source: ::windows::core::Error,
+        source: windows_result::Error,
     },
     #[cfg(any(windows, target_os = "macos"))]
     #[error("Could not start the default browser {}: {source}", program.display())]
