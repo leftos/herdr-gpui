@@ -9,6 +9,8 @@ mod info;
 mod ports;
 mod pr;
 mod remote_files;
+mod security;
+mod security_open;
 mod strict;
 mod wsl_forwards;
 
