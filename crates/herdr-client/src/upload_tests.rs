@@ -358,8 +358,8 @@ fn remote_trap_owns_created_file_before_acknowledgement() {
 #[test]
 fn fake_ssh_requires_exit_success_and_redacts_stderr() {
     let temp = Temp::new();
-    let fake = temp.file("fake-ssh", b"#!/bin/sh\nfor arg do remote=$arg; done\n/bin/sh -c \"$remote\"\nprintf 'SECRET\\033[31m' >&2\nexit 17\n");
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+    let fake = temp.0.join("fake-ssh");
+    crate::test_executable::write(&fake, b"#!/bin/sh\nfor arg do remote=$arg; done\n/bin/sh -c \"$remote\"\nprintf 'SECRET\\033[31m' >&2\nexit 17\n", 0o700).unwrap();
     let path = temp.file("one.iso", b"abc");
     let mut calls = 0;
     let error = upload(
