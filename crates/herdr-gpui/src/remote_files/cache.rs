@@ -223,8 +223,31 @@ pub(super) fn kept_path(local: &Path) -> PathBuf {
 /// The readable name a copy named `name` is kept under for good beside the
 /// folder that took its place: `<name>.kept` for the first (`n` of 1), else
 /// `<name>.<n>.kept`. `name` is cut on a character boundary, keeping its
-/// extension where that fits, so the whole is at most [`NAME_BYTES`].
+/// extension where that fits, so the whole is at most [`NAME_BYTES`]. A
+/// name whose first try would read as a transient [`kept_path`] name, as a
+/// host's file named `.17` would, starts at `.2.kept` instead, so a later
+/// move aside never takes its place.
 pub(super) fn kept_name(name: &str, n: u32) -> String {
+    let first = numbered_kept(name, 1);
+    if !transient_kept(&first) {
+        return if n <= 1 {
+            first
+        } else {
+            numbered_kept(name, n)
+        };
+    }
+    numbered_kept(name, n.saturating_add(1))
+}
+
+/// Whether `file` has the shape of a [`kept_path`] name: `.<serial>.kept`.
+fn transient_kept(file: &str) -> bool {
+    file.strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix(".kept"))
+        .is_some_and(|serial| !serial.is_empty() && serial.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// [`kept_name`]'s `n`th name for `name`, whatever its shape.
+fn numbered_kept(name: &str, n: u32) -> String {
     let suffix = if n <= 1 {
         ".kept".to_owned()
     } else {
