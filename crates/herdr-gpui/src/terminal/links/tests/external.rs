@@ -129,6 +129,7 @@ fn a_plain_file_address_is_a_path_to_look_for() {
             line: None,
             query: None,
             explicit: false,
+            unjoined: None,
         })
     );
     // Another host's file is nothing this machine can look for.

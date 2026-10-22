@@ -10,6 +10,7 @@ mod fetch_swap;
 mod fetches;
 mod folders;
 mod long_names;
+mod missing_dialog;
 mod queries;
 mod saves;
 mod windows_names;

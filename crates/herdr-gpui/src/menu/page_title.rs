@@ -82,6 +82,7 @@ impl Page {
             Self::RemoteControl => "Remote control",
             Self::RemoteDevices => "Remote control phones",
             Self::RemoteFolder => "Copy remote folder",
+            Self::RemoteMissing => "Remote file not found",
             Self::RemoteUpload => "Upload changes",
             Self::RemoveDevice => "Remove device",
             Self::RemoveWsl => "Remove WSL distribution",

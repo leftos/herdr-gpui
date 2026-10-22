@@ -47,6 +47,7 @@ fn every_cell_of_a_pasted_path_links_to_the_original_name() {
                     line: None,
                     query: None,
                     explicit: false,
+                    unjoined: None,
                 },
                 "{text} at {column}"
             );

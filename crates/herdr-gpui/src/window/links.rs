@@ -679,7 +679,8 @@ impl HerdrWindow {
             // host's file always opens in the system's application.
             Some(Fallback::File { link, .. }) if link.remote.is_some() => {
                 if let Some(remote) = RemotePath::from_link(&link) {
-                    self.open_remote_file(remote, link.query, cx);
+                    let unjoined = RemotePath::unjoined(&link);
+                    self.open_remote_file(remote, link.query, unjoined, link.cwd, cx);
                 }
             }
             Some(Fallback::File { link, in_editor }) => self.open_file_link(link, in_editor, cx),

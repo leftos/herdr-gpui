@@ -13,7 +13,7 @@ fn key() -> Key {
 /// A click on `PAGE` printed with `?a=1#top`, and its work finished.
 fn click(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
     view.update(cx, |view, cx| {
-        view.open_remote_file(remote(PAGE), Some("?a=1#top".into()), cx)
+        view.open_remote_file(remote(PAGE), Some("?a=1#top".into()), None, None, cx)
     });
     cx.run_until_parked();
 }

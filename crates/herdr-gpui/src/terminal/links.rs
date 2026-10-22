@@ -39,6 +39,7 @@ fn explicit_target(destination: &str) -> RowTarget {
         line: query.as_deref().and_then(path::fragment_line),
         query,
         explicit: true,
+        unjoined: None,
     };
     let url = match url::Url::parse(destination) {
         Ok(url) => url,
@@ -148,6 +149,7 @@ fn plain_address(text: &str) -> Option<RowTarget> {
             line,
             query,
             explicit: false,
+            unjoined: None,
         }),
         _ => None,
     }
@@ -170,6 +172,10 @@ pub(crate) enum RowTarget {
         /// `?` or `#`, which a page opened in the default browser keeps.
         query: Option<String>,
         explicit: bool,
+        /// The path the first row alone reads, when the terminal's own wrap
+        /// joined the next row's text to it: a word that merely ended at the
+        /// pane's last column reads the same way.
+        unjoined: Option<String>,
     },
     /// An explicit hyperlink to a file on another host, by that host's name.
     /// It is never opened here; a click says so.
@@ -374,11 +380,21 @@ impl LinkReading {
             }
             None => {
                 let found = path::plain_path(text, hit, self.windows_paths)?;
+                // Read the first row's part as the whole path is read, so its
+                // suffix and escapes go the same way.
+                let unjoined = joined
+                    .first_raw_join(&found.range)
+                    .and_then(|join| {
+                        path::plain_path(&text[..join], found.range.start, self.windows_paths)
+                    })
+                    .map(|first| first.path.into_owned())
+                    .filter(|first| found.path != first.as_str());
                 let target = RowTarget::Path {
                     path: found.path.into_owned(),
                     line: found.line,
                     query: found.query.map(str::to_owned),
                     explicit: false,
+                    unjoined,
                 };
                 (found.range, found.open, target)
             }

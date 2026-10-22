@@ -25,6 +25,7 @@ fn bare(path: &str) -> RowTarget {
         line: None,
         query: None,
         explicit: false,
+        unjoined: None,
     }
 }
 
@@ -112,6 +113,7 @@ fn paths_are_pane_links_only_and_never_web_links() {
             line: Some(4),
             query: None,
             explicit: false,
+            unjoined: None,
         }
     );
     assert_eq!(link.link.rows, vec![(0, 5..17)]);
@@ -168,6 +170,7 @@ fn a_hyperlink_names_a_path_by_a_file_address_or_without_a_scheme() {
         line: None,
         query: None,
         explicit: true,
+        unjoined: None,
     };
     let mut s = surface("report");
     s.frame.cells[0].hyperlink = Some(0);
