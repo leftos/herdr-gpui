@@ -17,6 +17,10 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+/// The numbered names a copy kept beside its folder tries before it stays
+/// under the name it was moved aside to.
+const KEEP_TRIES: u32 = 1000;
+
 /// A question about a folder that waits for the window to have no page open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FolderPrompt {
@@ -470,11 +474,51 @@ fn set_aside(local: &Path, synced: Option<watch::Meta>) -> Result<Option<PathBuf
         }
     };
     if !unedited {
+        let kept = keep_beside(&kept, local);
         tracing::warn!(kept = %kept.display(), "A remote file copy that may hold edits was left beside its folder copy");
         return Ok(Some(kept));
     }
     remove_kept(&kept);
     Ok(None)
+}
+
+/// Gives the copy moved aside to `moved` the readable name
+/// [`cache::kept_name`] makes from `local`'s, beside the folder now at
+/// `local`, never in place of a file already there: the first free number
+/// wins. The copy stays at `moved` when no name can be had. Blocking.
+pub(super) fn keep_beside(moved: &Path, local: &Path) -> PathBuf {
+    let name = local.file_name().unwrap_or_default().to_string_lossy();
+    for n in 1..=KEEP_TRIES {
+        let kept = local.with_file_name(cache::kept_name(&name, n));
+        match link_new(moved, &kept) {
+            Ok(()) => {
+                remove_kept(moved);
+                return kept;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                tracing::warn!(%error, kept = %kept.display(), "Remote file copy not renamed beside its folder copy");
+                return moved.to_owned();
+            }
+        }
+    }
+    tracing::warn!(moved = %moved.display(), "Every readable name for a kept remote file copy is taken");
+    moved.to_owned()
+}
+
+/// Makes the file at `from` also the file at `to` without replacing one
+/// there: a hard link, or a rename once nothing is at `to` where the file
+/// system has no hard links.
+fn link_new(from: &Path, to: &Path) -> io::Result<()> {
+    match std::fs::hard_link(from, to) {
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+            if std::fs::symlink_metadata(to).is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            std::fs::rename(from, to)
+        }
+        linked => linked,
+    }
 }
 
 /// The archive format a host's shell sends a folder in.
