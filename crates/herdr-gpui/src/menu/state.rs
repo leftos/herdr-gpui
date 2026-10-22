@@ -70,6 +70,8 @@ pub(crate) struct MenuState {
     pub(super) open_link: Option<crate::terminal::ExternalUrl>,
     /// The copy the remote file questions are about.
     pub(super) remote_file: Option<crate::remote_files::Key>,
+    /// The missing file the not-on-host question is about, and its field.
+    pub(super) remote_missing: Option<super::remote_file_dialogs::MissingDialog>,
     /// The batch the destroy-cloud-devices question is about. Dropping it
     /// unanswered cancels the batch.
     /// The batch the create-cloud-machines question is about.
@@ -329,6 +331,7 @@ impl MenuState {
             open_checkout: None,
             open_link: None,
             remote_file: None,
+            remote_missing: None,
             #[cfg(feature = "cloud")]
             cloud_create: None,
             #[cfg(feature = "cloud")]
@@ -406,6 +409,7 @@ impl MenuState {
         self.open_checkout = None;
         self.open_link = None;
         self.remote_file = None;
+        self.remote_missing = None;
         #[cfg(feature = "cloud")]
         {
             self.cloud_create = None;

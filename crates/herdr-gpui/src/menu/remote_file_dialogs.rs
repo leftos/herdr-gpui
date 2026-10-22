@@ -1,16 +1,147 @@
 //! The questions a save to a remote file's copy asks: whether to upload it,
-//! and what to do when the host's file changed since it was synced. They
-//! open only when no other page holds the window, and wait until then.
+//! and what to do when the host's file changed since it was synced; and the
+//! one a click's file the host does not have asks: which path to open
+//! instead. They open only when no other page holds the window, and wait
+//! until then.
 
 use super::Page;
 use crate::{
     HerdrWindow,
     fonts::StyledFont,
-    remote_files::{Answer, Prompt, PromptKind, Resolution, basename},
+    remote_files::{Answer, Missing, Prompt, PromptKind, Resolution, basename},
+    search_input::SearchInput,
+    window::RemotePath,
 };
 use gpui::{prelude::*, *};
 
+/// The not-on-host question: the click's missing file, and the field holding
+/// the path to open instead.
+pub(in crate::menu) struct MissingDialog {
+    missing: Missing,
+    input: Entity<SearchInput>,
+}
+
 impl HerdrWindow {
+    /// Shows the not-on-host question for `missing` unless another page holds
+    /// the window, its field focused and holding the path to edit. `true`
+    /// when it opened.
+    pub(crate) fn show_remote_missing(
+        &mut self,
+        missing: Missing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.menu.page.is_some() || !self.open_menu(window, cx) {
+            return false;
+        }
+        let input = cx.new(SearchInput::new);
+        input.update(cx, |input, cx| {
+            input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
+            input.set_placeholder("Path on the host", cx);
+            input.set_text_selected(&missing.prefill, cx);
+            window.focus(&input.focus, cx);
+        });
+        self.menu.remote_missing = Some(MissingDialog { missing, input });
+        self.menu.page = Some(Page::RemoteMissing);
+        cx.notify();
+        true
+    }
+
+    /// Whether `event` belongs to the not-on-host question's field, which
+    /// owns typing and composition; the question takes only Escape and Enter.
+    pub(in crate::menu) fn remote_missing_field_key(&self, event: &KeyDownEvent, cx: &App) -> bool {
+        self.menu
+            .remote_missing
+            .as_ref()
+            .is_some_and(|dialog| dialog.input.read(cx).is_composing())
+            || !matches!(event.keystroke.key.as_str(), "escape" | "enter")
+    }
+
+    /// Opens the path in the field as a click opens one, closing the
+    /// question. An empty field, or a relative path with no working
+    /// directory to put it under, does nothing.
+    pub(in crate::menu) fn submit_remote_missing(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((remote, query, cwd)) = self.remote_missing_choice(cx) else {
+            return;
+        };
+        self.dismiss_menu(window, cx);
+        self.open_remote_file(remote, query, None, cwd, cx);
+    }
+
+    /// The file the field names, the query it opens with, and the working
+    /// directory it was resolved under. The click's query and line stay only
+    /// while the field still holds the clicked path.
+    fn remote_missing_choice(
+        &self,
+        cx: &App,
+    ) -> Option<(RemotePath, Option<String>, Option<String>)> {
+        let dialog = self.menu.remote_missing.as_ref()?;
+        let input = dialog.input.read(cx);
+        let text = input.text().trim();
+        if input.is_composing() || text.is_empty() {
+            return None;
+        }
+        let missing = &dialog.missing;
+        let cwd = missing.cwd.clone();
+        if text == missing.remote.path {
+            return Some((missing.remote.clone(), missing.query.clone(), cwd));
+        }
+        let remote = RemotePath::typed(&missing.remote.target, text, cwd.as_deref())?;
+        Some((remote, None, cwd))
+    }
+
+    /// The path the not-on-host question's field holds, while it is open.
+    #[cfg(test)]
+    pub(crate) fn remote_missing_text(&self, cx: &App) -> Option<String> {
+        let dialog = self.menu.remote_missing.as_ref()?;
+        Some(dialog.input.read(cx).text().to_owned())
+    }
+
+    pub(in crate::menu) fn render_remote_missing(&self, cx: &mut Context<Self>) -> Div {
+        let Some(dialog) = &self.menu.remote_missing else {
+            return div();
+        };
+        let remote = &dialog.missing.remote;
+        div()
+            .debug_selector(|| "remote-missing".into())
+            .child(title(format!("Not on {}", remote.target)))
+            .child(
+                div().px(px(8.)).child(
+                    div()
+                        .debug_selector(|| "remote-missing-path".into())
+                        .rounded(px(crate::config::corners::CONTROL))
+                        .bg(rgb(self.theme.active))
+                        .px(px(10.))
+                        .py(px(6.))
+                        .overflow_hidden()
+                        .text_font(&self.config.terminal)
+                        .child(remote.path.clone()),
+                ),
+            )
+            .child(div().p(px(8.)).child(dialog.input.clone()))
+            .child(
+                buttons()
+                    .child(
+                        self.remote_file_button("remote-missing-open", "Open", true)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.submit_remote_missing(window, cx);
+                            })),
+                    )
+                    .child(
+                        self.remote_file_button("remote-missing-cancel", "Cancel", false)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.dismiss_menu(window, cx);
+                            })),
+                    ),
+            )
+    }
+
     /// The question the open page asks, if it is one of these.
     pub(crate) fn shown_remote_file_prompt(&self) -> Option<Prompt> {
         let kind = match self.menu.page? {

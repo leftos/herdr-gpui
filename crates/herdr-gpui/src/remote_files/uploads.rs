@@ -46,6 +46,11 @@ impl HerdrWindow {
             return;
         }
         let Some(prompt) = self.remote_files.next_prompt() else {
+            if let Some(missing) = self.remote_files.missing.front().cloned()
+                && self.show_remote_missing(missing, window, cx)
+            {
+                self.remote_files.missing.pop_front();
+            }
             return;
         };
         if self.show_remote_file_prompt(&prompt, window, cx) {

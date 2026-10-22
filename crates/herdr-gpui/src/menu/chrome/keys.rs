@@ -128,6 +128,10 @@ impl HerdrWindow {
             self.host_menu_key(event, window, cx);
             return;
         }
+        // The path field owns typing and composition.
+        if self.menu.page == Some(Page::RemoteMissing) && self.remote_missing_field_key(event, cx) {
+            return;
+        }
         if matches!(
             self.menu.page,
             Some(Page::Tab | Page::RenameTab | Page::MoveTab)
@@ -351,6 +355,9 @@ impl HerdrWindow {
             }
             "enter" if self.menu.page == Some(Page::RemoteConflict) => {
                 self.confirm_remote_conflict(crate::remote_files::Resolution::KeepBoth, window, cx);
+            }
+            "enter" if self.menu.page == Some(Page::RemoteMissing) => {
+                self.submit_remote_missing(window, cx);
             }
             "enter" if self.menu.page == Some(Page::VersionMismatch) => {
                 self.act_on_version_mismatch(window, cx);

@@ -75,6 +75,7 @@ impl Page {
             Self::PrMerge => "Merge pull request",
             Self::PrReview => "Pull request",
             Self::RemoteConflict => "Remote file changed",
+            Self::RemoteMissing => "Remote file not found",
             Self::RemoteUpload => "Upload changes",
             Self::RemoveDevice => "Remove device",
             Self::RemoveWsl => "Remove WSL distribution",

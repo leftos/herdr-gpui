@@ -76,6 +76,9 @@ pub(crate) enum Page {
     /// A remote file's host changed since its copy was synced, so a save
     /// was not uploaded.
     RemoteConflict,
+    /// A file an SSH path click asked for is not on the host; offers the
+    /// path to edit and open again.
+    RemoteMissing,
     /// Asks before a save to a remote file's copy is uploaded.
     RemoteUpload,
     RemoveDevice,
