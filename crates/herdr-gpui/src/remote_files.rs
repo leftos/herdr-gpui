@@ -107,6 +107,16 @@ impl Error {
             ))
         )
     }
+
+    /// Whether the host has no file at the path a fetch asked for.
+    fn is_missing(&self) -> bool {
+        matches!(
+            self,
+            Self::Fetch(herdr_client::Error::RemoteFile(
+                herdr_client::RemoteFileError::Missing
+            ))
+        )
+    }
 }
 
 pub(crate) type Result<T, E = Error> = std::result::Result<T, E>;
@@ -275,6 +285,29 @@ pub(crate) struct Prompt {
     pub(crate) kind: PromptKind,
 }
 
+/// A click's file the host does not have, waiting for the window to have
+/// no page open to ask for another path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Missing {
+    /// The host's file the click asked for.
+    pub(crate) remote: RemotePath,
+    /// The `?query` or `#fragment` the click's link printed after the path.
+    pub(crate) query: Option<String>,
+    /// The working directory a relative path typed in its place is under.
+    pub(crate) cwd: Option<String>,
+    /// The path the question offers to edit: the first row's own path when
+    /// a raw wrap joined the next row's text to the click's, else the
+    /// click's.
+    pub(crate) prefill: String,
+}
+
+/// What a click asked for besides the host's file.
+struct Click {
+    query: Option<String>,
+    unjoined: Option<RemotePath>,
+    cwd: Option<String>,
+}
+
 /// The window whose copies a folder of the cache holds. Each window keeps
 /// its own copies, so a fetch in one never writes over another's edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +335,8 @@ pub(crate) struct RemoteFiles {
     io: Io,
     /// When the last watch run started.
     last_watch: Option<Instant>,
+    /// Clicks' files the host does not have, waiting to be asked about.
+    missing: VecDeque<Missing>,
     /// The folder of the cache this window's copies are in.
     owner: Owner,
     prompts: VecDeque<Prompt>,
@@ -835,10 +870,16 @@ impl HerdrWindow {
     /// copy with the system's default application, or says why it could not.
     /// A copy in conflict is reopened, and its question asked again. A page
     /// opens with `query`, the `?query` or `#fragment` printed after its path.
+    /// `unjoined` is the path the first row reads alone, where a raw wrap
+    /// joined the next row's text to `remote`. A file the host does not have
+    /// queues the question that offers that path, or `remote`'s, to edit;
+    /// a relative path typed there is under `cwd`.
     pub(crate) fn open_remote_file(
         &mut self,
         remote: RemotePath,
         query: Option<String>,
+        unjoined: Option<RemotePath>,
+        cwd: Option<String>,
         cx: &mut Context<Self>,
     ) {
         // A folder copy goes to its probe, never through a file fetch.
@@ -876,15 +917,20 @@ impl HerdrWindow {
             .copy(&remote.target, &remote.path)
             .map(|copy| copy.synced_meta);
         let page_query = query.clone();
-        let completion = remote.clone();
+        let asked = remote.clone();
         let fetch = cx
             .background_executor()
-            .spawn(async move { fetch_copy(&io, owner, &remote, synced, page_query.as_deref()) });
+            .spawn(async move { fetch_copy(&io, owner, &asked, synced, page_query.as_deref()) });
+        let click = Click {
+            query,
+            unjoined,
+            cwd,
+        };
         cx.spawn(async move |this, cx| {
             let fetched = fetch.await;
             // The window may have closed meanwhile; nothing opens then.
             let _ = this.update(cx, |this, cx| {
-                this.remote_file_fetched(&key, completion, query, fetched, cx)
+                this.remote_file_fetched(remote, click, fetched, cx)
             });
         })
         .detach();
@@ -892,19 +938,19 @@ impl HerdrWindow {
 
     fn remote_file_fetched(
         &mut self,
-        key: &Key,
         remote: RemotePath,
-        query: Option<String>,
+        click: Click,
         fetched: Result<Fetch>,
         cx: &mut Context<Self>,
     ) {
-        self.remote_files.fetching.remove(key);
+        let key = (remote.target.clone(), remote.path.clone());
+        self.remote_files.fetching.remove(&key);
         match fetched {
             // Saved while the fetch ran: the copy with the save opens, and
             // the watch takes the save from there.
             Ok(Fetch::KeptEdits) => {
-                if let Some(copy) = self.remote_files.copies.get(key) {
-                    self.open_in_system_app(copy.local.clone(), query, cx);
+                if let Some(copy) = self.remote_files.copies.get(&key) {
+                    self.open_in_system_app(copy.local.clone(), click.query, cx);
                 }
             }
             Ok(Fetch::Written(done)) => {
@@ -925,6 +971,20 @@ impl HerdrWindow {
                 ) =>
             {
                 self.open_remote_folder(remote, cx);
+            }
+            // The poll opens the question once no page holds the window.
+            Err(error) if error.is_missing() => {
+                tracing::info!(target = %remote.target, "Remote file not on the host; asking for another path");
+                let prefill = click
+                    .unjoined
+                    .map_or_else(|| remote.path.clone(), |unjoined| unjoined.path);
+                self.remote_files.missing.push_back(Missing {
+                    remote,
+                    query: click.query,
+                    cwd: click.cwd,
+                    prefill,
+                });
+                cx.notify();
             }
             Err(error) => {
                 tracing::warn!(%error, "Remote file not fetched");

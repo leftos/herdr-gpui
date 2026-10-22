@@ -511,6 +511,7 @@ impl HerdrWindow {
                         | Page::OpenCheckout
                         | Page::OpenLink
                         | Page::RemoteConflict
+                        | Page::RemoteMissing
                         | Page::RemoteUpload
                 ) || self.cloud_batch_open(),
                 |panel| {
@@ -686,6 +687,8 @@ impl HerdrWindow {
             panel = panel.child(self.render_remote_conflict(cx));
         } else if page == Page::RemoteFolder {
             panel = panel.child(self.render_remote_folder(cx));
+        } else if page == Page::RemoteMissing {
+            panel = panel.child(self.render_remote_missing(cx));
         } else if page == Page::Install {
             panel = panel
                 .child(div().p(px(8.)).child("Herdr must be installed"))

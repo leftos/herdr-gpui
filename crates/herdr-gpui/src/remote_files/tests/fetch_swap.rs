@@ -193,7 +193,9 @@ fn a_copy_being_fetched_is_not_watched_until_its_fetch_ends() {
 fn a_conflict_refetch_holds_its_copy_while_it_runs(cx: &mut TestAppContext) {
     let host = FakeHost::new();
     let (view, cx) = window(&host, cx);
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote(PATH), None, None, None, cx)
+    });
     cx.run_until_parked();
     let key: Key = ("me@devbox".into(), PATH.into());
     let conflict = SyncState::Conflict {

@@ -90,9 +90,15 @@ impl Joined {
 
     /// Whether the text in `range` runs across a raw wrap.
     pub(super) fn crosses_raw_join(&self, range: &Range<usize>) -> bool {
+        self.first_raw_join(range).is_some()
+    }
+
+    /// Where the first raw wrap inside `range` starts its row in the text.
+    pub(super) fn first_raw_join(&self, range: &Range<usize>) -> Option<usize> {
         self.raw_joins
             .iter()
-            .any(|&join| range.start < join && join < range.end)
+            .copied()
+            .find(|&join| range.start < join && join < range.end)
     }
 
     /// Whether the word holding `range` is cut off with an ellipsis, the way

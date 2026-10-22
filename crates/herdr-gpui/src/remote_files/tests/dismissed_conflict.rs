@@ -19,7 +19,9 @@ fn poll(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
 
 /// A link click on `PATH`, and its work finished.
 fn click(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote(PATH), None, None, None, cx)
+    });
     cx.run_until_parked();
 }
 

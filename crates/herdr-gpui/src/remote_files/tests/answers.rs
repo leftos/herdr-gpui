@@ -18,7 +18,9 @@ fn poll(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
 fn saving_the_synced_bytes_back_closes_the_open_upload_question(cx: &mut TestAppContext) {
     let host = FakeHost::new();
     let (view, cx) = window(&host, cx);
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote(PATH), None, None, None, cx)
+    });
     cx.run_until_parked();
     let key = ("me@devbox".to_owned(), PATH.to_owned());
     let (local, synced) = view.read_with(cx, |view, _| {
@@ -54,7 +56,9 @@ fn saving_the_synced_bytes_back_closes_the_open_upload_question(cx: &mut TestApp
 fn overwrite_after_the_host_s_bytes_were_saved_back_pushes_nothing(cx: &mut TestAppContext) {
     let host = FakeHost::new();
     let (view, cx) = window(&host, cx);
-    view.update(cx, |view, cx| view.open_remote_file(remote(PATH), None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote(PATH), None, None, None, cx)
+    });
     cx.run_until_parked();
     let key = ("me@devbox".to_owned(), PATH.to_owned());
     view.update(cx, |view, cx| {

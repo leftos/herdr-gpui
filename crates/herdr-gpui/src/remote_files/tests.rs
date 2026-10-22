@@ -9,6 +9,7 @@ mod fetch_meta;
 mod fetch_swap;
 mod fetches;
 mod folders;
+mod missing_dialog;
 mod queries;
 mod saves;
 mod windows_names;
