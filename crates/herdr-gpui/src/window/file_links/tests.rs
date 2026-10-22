@@ -74,10 +74,24 @@ fn only_documents_and_folders_open_themselves() {
     let docs = root.path().join("docs");
     std::fs::create_dir(&docs).unwrap();
     assert_eq!(opened(&docs), Some(real.join("docs")));
-    // A folder opens itself whatever its name, a bundle's included.
+    // A folder opens itself whatever its name, unless it is an application
+    // bundle, which opens the folder holding it rather than launching.
+    let dotted = root.path().join("v1.2");
+    std::fs::create_dir(&dotted).unwrap();
+    assert_eq!(opened(&dotted), Some(real.join("v1.2")));
     let bundle = root.path().join("Tool.app");
-    std::fs::create_dir(&bundle).unwrap();
-    assert_eq!(opened(&bundle), Some(real.join("Tool.app")));
+    std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+    std::fs::write(bundle.join("Contents").join("Info.plist"), "x").unwrap();
+    assert_eq!(opened(&bundle), Some(real.clone()));
+    // A bundle inside a bundle opens the nearest folder that is not one.
+    let helpers = bundle.join("Contents").join("Helpers");
+    let nested = helpers.join("B.app");
+    std::fs::create_dir_all(nested.join("Contents")).unwrap();
+    std::fs::write(nested.join("Contents").join("Info.plist"), "x").unwrap();
+    assert_eq!(
+        opened(&nested),
+        Some(real.join("Tool.app").join("Contents").join("Helpers"))
+    );
     assert_eq!(opened(&root.path().join("gone.txt")), None);
     assert!(!remote(root.path()));
     #[cfg(unix)]
@@ -89,7 +103,7 @@ fn only_documents_and_folders_open_themselves() {
         // A document's name on a symlink does not disguise where it leads.
         let disguise = root.path().join("notes.md");
         std::os::unix::fs::symlink(&bundle, &disguise).unwrap();
-        assert_eq!(opened(&disguise), Some(real.join("Tool.app")));
+        assert_eq!(opened(&disguise), Some(real.clone()));
         // Nor does a folder named like one hide a bundle above it.
         let inside = bundle.join("run.sh");
         std::fs::write(&inside, "x").unwrap();

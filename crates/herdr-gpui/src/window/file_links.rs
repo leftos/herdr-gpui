@@ -8,11 +8,12 @@
 //! are links by their shape alone. A WSL or cloud pane's paths are not read.
 //!
 //! Terminal output is untrusted, and a hyperlink's text need not match its
-//! target, so a click never launches anything. Only a folder or a
-//! regular, non-executable file of a known document type opens itself, judged
-//! by where any symlinks lead; anything else, from an application to a script
-//! the system might run, opens the folder that holds it. A network path,
-//! which would reach out to another machine, opens nothing.
+//! target, so a click never launches anything. Only a folder that is not an
+//! application bundle, or a regular, non-executable file of a known document
+//! type, opens itself, judged by where any symlinks lead; anything else, from
+//! a bundle (a dotted folder holding `Contents/Info.plist`) to a script the
+//! system might run, opens the folder that holds it. A network path, which
+//! would reach out to another machine, opens nothing.
 
 use super::HerdrWindow;
 use crate::editor::EditorTarget;
@@ -170,11 +171,19 @@ fn real_path(path: &Path) -> Result<PathBuf, Unresolved> {
     Ok(resolved)
 }
 
-/// What a click on `path` opens, once symlinks are resolved: a folder,
-/// whatever its name, or a document itself, and otherwise the nearest
-/// folder holding it that is not itself a bundle the system would launch.
-/// `None` when the path does not exist or leads to another machine. Reads
-/// the disk.
+/// Whether the folder `folder` is an application bundle the system would
+/// launch rather than show: a name with an extension, such as `Tool.app`,
+/// and a `Contents/Info.plist` inside. Checked on every platform. Reads the
+/// disk.
+fn bundle(folder: &Path) -> bool {
+    folder.extension().is_some() && folder.join("Contents").join("Info.plist").is_file()
+}
+
+/// What a click on `path` opens, once symlinks are resolved: a folder that
+/// is not a bundle, whatever its name, or a document itself. A bundle opens
+/// the nearest folder above it that is not one, and anything else the
+/// nearest folder holding it with no extension. `None` when the path does
+/// not exist or leads to another machine. Reads the disk.
 pub(crate) fn opened(path: &Path) -> Option<PathBuf> {
     let real = real_path(path).ok()?;
     let metadata = std::fs::metadata(&real).ok()?;
@@ -182,8 +191,14 @@ pub(crate) fn opened(path: &Path) -> Option<PathBuf> {
         .extension()
         .map(|extension| extension.to_string_lossy().to_ascii_lowercase());
     let opens = if metadata.is_dir() {
-        // A folder opens itself, so `Tool.app` is the bundle clicked, not
-        // the folder holding it.
+        // A dotted folder such as `v1.2` opens itself; a bundle would launch.
+        if bundle(&real) {
+            return real
+                .ancestors()
+                .skip(1)
+                .find(|folder| !bundle(folder))
+                .map(Path::to_owned);
+        }
         true
     } else {
         // An extensionless file, such as `Makefile`, opens as text.
@@ -370,8 +385,9 @@ impl HerdrWindow {
     }
 
     /// Opens `path` with the system's default application under the same
-    /// rule as a clicked path: a document itself, and otherwise the folder
-    /// holding it, so an executable or a bundle is never launched. A page
+    /// rule as a clicked path: a document or a folder that is not an
+    /// application bundle itself, and otherwise the folder holding it, so an
+    /// executable or a bundle is never launched. A page
     /// opens with `query`, the `?query` or `#fragment` a link printed after
     /// it; see [`page_url`] and [`Self::open_file_url`]. Checked on the
     /// background executor.

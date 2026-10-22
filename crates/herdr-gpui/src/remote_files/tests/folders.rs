@@ -433,11 +433,14 @@ fn a_folder_that_became_a_file_is_forgotten_and_the_next_click_fetches_it(cx: &m
     assert_eq!(std::fs::read(&copy.local).unwrap(), NOTES);
 }
 
-#[gpui::test]
-fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext) {
-    let host = FakeHost::new();
-    let (view, cx) = window(&host, cx);
-    click(&view, cx, PATH);
+/// Fetches `PATH` as a file copy, then makes the host's path a folder for
+/// the next click. Returns where the file copy is.
+fn file_copy_then_folder(
+    host: &FakeHost,
+    view: &Entity<HerdrWindow>,
+    cx: &mut VisualTestContext,
+) -> PathBuf {
+    click(view, cx, PATH);
     let local = view.read_with(cx, |view, _| {
         view.remote_files
             .copy("me@devbox", PATH)
@@ -449,6 +452,27 @@ fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext
     host.answer_fetches(&[not_a_file]);
     view.update(cx, |_, _| host.answer_probes(&[probed]));
     host.serve_archive(&zip_of(&[("src/inner.txt", b"inner")]));
+    local
+}
+
+/// The file copies a folder transfer left beside `local`, which may hold edits.
+fn kept_beside(local: &Path) -> Vec<PathBuf> {
+    let name = local.file_name().unwrap().to_string_lossy().into_owned();
+    std::fs::read_dir(local.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            let file = path.file_name().unwrap().to_string_lossy();
+            file.starts_with(&name) && file.ends_with(".kept")
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = window(&host, cx);
+    let local = file_copy_then_folder(&host, &view, cx);
     click(&view, cx, PATH);
     let (folder, _) = view
         .read_with(cx, |view, _| view.remote_files.folder("me@devbox", PATH))
@@ -456,6 +480,47 @@ fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext
     assert_eq!(folder, local, "the same path now holds a folder");
     assert!(folder.is_dir());
     assert_eq!(std::fs::read(folder.join("inner.txt")).unwrap(), b"inner");
+    assert_eq!(
+        kept_beside(&local),
+        Vec::<PathBuf>::new(),
+        "an unedited copy is not kept"
+    );
+}
+
+#[gpui::test]
+fn an_edited_file_that_became_a_folder_is_kept_beside_the_folder(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = window(&host, cx);
+    let local = file_copy_then_folder(&host, &view, cx);
+    let edits = b"# Notes\nA save the watch has not taken yet.\n";
+    std::fs::write(&local, edits).unwrap();
+    click(&view, cx, PATH);
+    assert!(local.is_dir(), "the folder takes the copy's place");
+    assert_eq!(std::fs::read(local.join("inner.txt")).unwrap(), b"inner");
+    let kept = kept_beside(&local);
+    assert_eq!(kept.len(), 1, "the edited copy is kept: {kept:?}");
+    assert_eq!(std::fs::read(&kept[0]).unwrap(), edits);
+    let text = flash_text(&view, cx).expect("the kept copy is reported");
+    let kept_name = kept[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(text.contains(&kept_name), "{text}");
+}
+
+#[gpui::test]
+fn a_file_copy_with_no_synced_state_is_kept_beside_the_folder(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = window(&host, cx);
+    let local = file_copy_then_folder(&host, &view, cx);
+    view.update(cx, |view, _| {
+        view.remote_files
+            .copies
+            .remove(&("me@devbox".to_owned(), PATH.to_owned()))
+    })
+    .expect("the file copy was recorded");
+    click(&view, cx, PATH);
+    assert!(local.is_dir(), "the folder takes the copy's place");
+    let kept = kept_beside(&local);
+    assert_eq!(kept.len(), 1, "a copy not known unedited is kept: {kept:?}");
+    assert_eq!(std::fs::read(&kept[0]).unwrap(), NOTES);
 }
 
 #[gpui::test]
