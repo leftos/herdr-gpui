@@ -216,6 +216,12 @@ pub(super) fn kept_path(local: &Path) -> PathBuf {
     beside(local, "kept")
 }
 
+/// Where a push stages the copy at `local` before sending it: beside it,
+/// under a name no other push of this process has.
+pub(super) fn staged_path(local: &Path) -> PathBuf {
+    beside(local, "push")
+}
+
 /// `local`'s name with a serial number unique in this process and
 /// `extension` added, in `local`'s folder.
 fn beside(local: &Path, extension: &str) -> PathBuf {
