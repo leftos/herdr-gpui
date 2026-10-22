@@ -44,16 +44,19 @@ fn posix_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
             "if [ ! -d \"$path\" ]; then exit {NOT_A_FILE_EXIT}; fi"
         ))
         .unwrap();
-    let strip = script
-        .find("while [ \"${path%/}\" != \"$path\" ]; do path=${path%/}; done")
-        .unwrap();
-    let empty = script
+    let resolve = script
         .find(&format!(
-            "if [ -z \"$path\" ]; then exit {NOT_A_FILE_EXIT}; fi"
+            "path=$(CDPATH= cd -P -- \"$path\" && pwd -P) || exit {NOT_A_FILE_EXIT}"
+        ))
+        .unwrap();
+    let root = script
+        .find(&format!(
+            "if [ \"$path\" = / ]; then exit {NOT_A_FILE_EXIT}; fi"
         ))
         .unwrap();
     let top = script.find("top=${path##*/}").unwrap();
-    assert!(missing < folder && folder < strip && strip < empty && empty < top);
+    assert!(missing < folder && folder < resolve && resolve < root && root < top);
+    assert!(!script.contains("while [ \"${path%/}\""));
     let size = script.find("printf '%s\\n' \"$size\"").unwrap();
     let digest = script.find("printf '%s\\n' \"${sum%% *}\"").unwrap();
     let absent = script.find("printf '%s\\n' '-'").unwrap();
@@ -78,7 +81,7 @@ fn posix_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
 }
 
 #[test]
-fn posix_archive_refuses_the_root_and_strips_trailing_slashes() {
+fn posix_archive_resolves_the_path_before_refusing_the_root() {
     let script = scripts::posix_archive_script("/tree/");
     let missing = script
         .find(&format!(
@@ -95,15 +98,18 @@ fn posix_archive_refuses_the_root_and_strips_trailing_slashes() {
             "if [ \"$path\" = / ]; then exit {NOT_A_FILE_EXIT}; fi"
         ))
         .unwrap();
-    assert!(missing < folder && folder < root);
-    let strip = script
-        .find("while [ \"${path%/}\" != \"$path\" ]; do path=${path%/}; done")
+    let resolve = script
+        .find(&format!(
+            "path=$(CDPATH= cd -P -- \"$path\" && pwd -P) || exit {NOT_A_FILE_EXIT}"
+        ))
         .unwrap();
+    assert!(missing < folder && folder < resolve && resolve < root);
     let split = script.find("dir=${path%/*}; base=${path##*/}").unwrap();
     let stream = script
         .find("exec tar -czf - -C \"$dir\" -- \"$base\"")
         .unwrap();
-    assert!(root < strip && strip < split && split < stream);
+    assert!(root < split && split < stream);
+    assert!(!script.contains("while [ \"${path%/}\""));
 }
 
 #[test]
@@ -133,7 +139,12 @@ fn powershell_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
     let not_a_file = script.find(&format!("exit {NOT_A_FILE_EXIT}")).unwrap();
     let missing = script.find(&format!("exit {MISSING_EXIT}")).unwrap();
     assert!(directory < file && file < not_a_file && not_a_file < missing);
-    assert_eq!(script.matches("Write-Output").count(), 4);
+    assert!(!script.contains("Write-Output"));
+    let utf8 = script
+        .find("(New-Object System.Text.UTF8Encoding $false).GetBytes($answer)")
+        .unwrap();
+    let stdout = script.find("[Console]::OpenStandardOutput()").unwrap();
+    assert!(utf8 < stdout);
     assert!(script.contains("$base = [System.IO.Path]::GetFileName($root)"));
     assert!(script.contains(&format!("if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}")));
     assert!(script.contains("[int]$skipped = 0"));
