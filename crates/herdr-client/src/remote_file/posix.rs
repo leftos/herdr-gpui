@@ -116,7 +116,9 @@ if [ -n "$work" ]; then rmdir -- "$work" 2>/dev/null; fi
 }"#;
 
 /// Enters the private work folder and refuses unless it is the SSH user's
-/// `drwx------` folder inside the anchored folder.
+/// `drwx------` folder inside the anchored folder. `drwx--S---` passes too:
+/// Linux gives a folder made in a set-group-ID folder that bit, which grants
+/// its group nothing without the group's other bits.
 fn enter_work_folder() -> String {
     format!(
         r#"cd -P -- "$work" || exit 1
@@ -125,7 +127,7 @@ work_listing=$(ls -ldn . 2>/dev/null) || work_listing=
 set -f
 set -- $work_listing
 set +f
-case ${{1-}} in drwx------*) ;; *) exit {SHARED_FOLDER_EXIT} ;; esac
+case ${{1-}} in drwx------*|drwx--S---*) ;; *) exit {SHARED_FOLDER_EXIT} ;; esac
 if [ "${{3-}}" != "$uid" ] || [ "$(inode ..)" != "$here" ]; then exit {SHARED_FOLDER_EXIT}; fi"#
     )
 }
@@ -322,7 +324,7 @@ copy=
 probe=
 probe_to=
 trap cleanup EXIT
-work=$(mktemp -d "./.$name.XXXXXX") || exit 1
+work=$(mktemp -d ./.herdr-push.XXXXXX) || exit 1
 {enter}
 target=../$name
 copy=$(mktemp ./f.XXXXXX) || exit 1
