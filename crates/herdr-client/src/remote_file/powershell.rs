@@ -142,7 +142,7 @@ function Assert-HerdrReplaceable {{
 }}
 Assert-HerdrReplaceable
 $folder = [System.IO.Path]::GetDirectoryName($path)
-$name = '.' + [System.IO.Path]::GetFileName($path) + '.' + [System.IO.Path]::GetRandomFileName()
+$name = '.herdr-push.' + [System.IO.Path]::GetRandomFileName()
 $temporary = [System.IO.Path]::Combine($folder, $name)
 $like = if ([System.IO.File]::Exists($path)) {{ $path }} else {{ $source }}
 $security = $null

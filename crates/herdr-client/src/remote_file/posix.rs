@@ -316,7 +316,7 @@ copy=
 probe=
 probe_to=
 trap cleanup EXIT
-work=$(mktemp -d "./.$name.XXXXXX") || exit 1
+work=$(mktemp -d ./.herdr-push.XXXXXX) || exit 1
 {enter}
 target=../$name
 copy=$(mktemp ./f.XXXXXX) || exit 1

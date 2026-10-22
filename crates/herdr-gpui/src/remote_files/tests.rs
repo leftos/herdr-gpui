@@ -8,6 +8,7 @@ mod dismissed_conflict;
 mod fetch_meta;
 mod fetch_swap;
 mod fetches;
+mod long_names;
 mod saves;
 mod windows_names;
 
