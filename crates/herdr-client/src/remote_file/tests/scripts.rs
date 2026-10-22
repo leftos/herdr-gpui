@@ -331,7 +331,7 @@ fn probe_answers_are_five_strict_lines() {
     assert_eq!(
         parse_probe_output(valid.as_bytes()).unwrap(),
         ProbedFolder {
-            bytes: 12 * 1024,
+            bytes: 12,
             fingerprint: Some([0xab; 32]),
             top: "src".into(),
             links_skipped: 0,

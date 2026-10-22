@@ -12,12 +12,15 @@ use super::{
     powershell::{PREAMBLE, path_expression},
 };
 
-/// The `/bin/sh` script that prints the folder's size in KiB, a SHA-256 of a
-/// sorted metadata listing of its tree (or `-` when the host has no SHA-256
-/// tool), the name its archive's entries start with, `0` for the links its
-/// archive leaves out, and the number of regular files in the tree. `find
-/// -type f` neither follows nor counts links, and `%.0sx` prints one `x` per
-/// path, so a file name holding a newline still counts once.
+/// The `/bin/sh` script that prints the folder's size, the sum of its regular
+/// files' bytes, a SHA-256 of a sorted metadata listing of its tree (or `-`
+/// when the host has no SHA-256 tool), the name its archive's entries start
+/// with, `0` for the links its archive leaves out, and the number of regular
+/// files in the tree. GNU `stat -c`, BSD `stat -f`, or `ls -lnd` on a host
+/// with neither, gives both the sizes and the listing; `du` is not used, as
+/// it counts disk blocks and GNU and BSD spell its byte option differently.
+/// `find -type f` neither follows nor counts links, and `%.0sx` prints one
+/// `x` per path, so a file name holding a newline still counts once.
 pub(super) fn posix_probe_script(path: &str) -> String {
     format!(
         r#"{assign}
@@ -26,18 +29,25 @@ if [ ! -d "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
 path=$(CDPATH= cd -P -- "$path" && pwd -P) || exit {NOT_A_FILE_EXIT}
 if [ "$path" = / ]; then exit {NOT_A_FILE_EXIT}; fi
 top=${{path##*/}}
-size=$(du -sk -- "$path" 2>/dev/null | cut -f1) || exit 1
+if stat -c '%n %s %y' -- "$path" >/dev/null 2>&1; then form=gnu
+elif stat -f '%N %z %m' -- "$path" >/dev/null 2>&1; then form=bsd
+else form=ls
+fi
+case $form in
+gnu) sizes=$(find "$path" -type f -exec stat -c '%s' -- {{}} +) ;;
+bsd) sizes=$(find "$path" -type f -exec stat -f '%z' -- {{}} +) ;;
+*) sizes=$(find "$path" -type f -exec ls -lnd -- {{}} + | awk '{{print $5}}') ;;
+esac || exit 1
+size=$(printf '%s\n' "$sizes" | awk '{{total += $1}} END {{printf "%.0f\n", total}}') || exit 1
 case $size in ''|*[!0-9]*) exit 1 ;; esac
 printf '%s\n' "$size"
 {hasher}
 if [ -n "$hasher" ]; then
-if stat -c '%n %s %y' -- "$path" >/dev/null 2>&1; then
-listing=$(find "$path" -exec stat -c '%n %s %y' -- {{}} +) || exit 1
-elif stat -f '%N %z %m' -- "$path" >/dev/null 2>&1; then
-listing=$(find "$path" -exec stat -f '%N %z %m' -- {{}} +) || exit 1
-else
-listing=$(find "$path" -exec ls -lnd -- {{}} +) || exit 1
-fi
+case $form in
+gnu) listing=$(find "$path" -exec stat -c '%n %s %y' -- {{}} +) ;;
+bsd) listing=$(find "$path" -exec stat -f '%N %z %m' -- {{}} +) ;;
+*) listing=$(find "$path" -exec ls -lnd -- {{}} +) ;;
+esac || exit 1
 sum=$(printf '%s\n' "$listing" | LC_ALL=C sort | $hasher) || exit 1
 printf '%s\n' "${{sum%% *}}"
 else
@@ -72,7 +82,8 @@ exec tar -czf - -C "$dir" -- "$base""#,
     )
 }
 
-/// The PowerShell script that prints the folder's size in KiB, a SHA-256 of
+/// The PowerShell script that prints the folder's size, the sum of its regular
+/// files' bytes, a SHA-256 of
 /// its sorted metadata listing, the name its archive's entries start with, the
 /// number of reparse points it skipped, and the number of regular files it
 /// summed; directories and reparse points are not counted. Directories are
@@ -142,8 +153,7 @@ try {{
 }} finally {{
     $sha.Dispose()
 }}
-$kib = [long][Math]::Ceiling([double]$total / 1024)
-$answer = [string]::Join("`n", @($kib.ToString(), $digest, $base, ([long]$skipped).ToString(), $files.ToString())) + "`n"
+$answer = [string]::Join("`n", @($total.ToString(), $digest, $base, ([long]$skipped).ToString(), $files.ToString())) + "`n"
 $answerBytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($answer)
 $stdout = [Console]::OpenStandardOutput()
 $stdout.Write($answerBytes, 0, $answerBytes.Length)
