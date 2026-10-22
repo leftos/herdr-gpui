@@ -45,3 +45,27 @@ fn a_copy_with_the_longest_name_is_fetched_and_pushed() {
     .unwrap();
     assert_eq!(host.received()[0].bytes, b"# Edited\n");
 }
+
+/// A host's file may be named like a temporary file. Its copy then shares
+/// the folder with temporary names of the same shape, which must never be
+/// its own, or a failed write's cleanup would remove the copy.
+#[test]
+fn a_temporary_name_is_never_the_copy_s_own() {
+    let local = Path::new("cache").join(".7.part");
+    let mut serials = 6..;
+    let mut next = || serials.next().unwrap();
+    assert_eq!(
+        cache::beside_from(&local, "part", &mut next),
+        Path::new("cache").join(".6.part")
+    );
+    assert_eq!(
+        cache::beside_from(&local, "part", &mut next),
+        Path::new("cache").join(".8.part"),
+        "the copy's own name is skipped"
+    );
+    assert_eq!(
+        cache::beside_from(&local, "kept", || 7),
+        Path::new("cache").join(".7.kept"),
+        "another extension is another name"
+    );
+}

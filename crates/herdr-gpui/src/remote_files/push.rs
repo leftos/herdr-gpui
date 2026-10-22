@@ -115,11 +115,10 @@ impl Staged {
             if before.len > limit {
                 return Err(Error::TooLarge { limit });
             }
-            let staged = Self {
-                path: cache::staged_path(local),
-                meta: before,
-            };
-            let mut file = cache::create_private_file(&staged.path)?;
+            let path = cache::staged_path(local);
+            // Armed only once the file is ours, so the drop removes nothing else.
+            let mut file = cache::create_private_file(&path)?;
+            let staged = Self { path, meta: before };
             let source = File::open(local).map_err(|source| cache_error(local, source))?;
             let copied = io::copy(&mut source.take(before.len), &mut file)
                 .map_err(|source| cache_error(&staged.path, source))?;
