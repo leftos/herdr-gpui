@@ -9,6 +9,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+mod folder_size;
+
 /// Each PowerShell on this machine that starts.
 fn shells() -> Vec<&'static str> {
     let candidates: &[&'static str] = if cfg!(windows) {
@@ -442,7 +444,7 @@ fn probes(fixture: &Fixture) {
     let first = fixture.probe(&fixture.text(tree));
     assert_code(&first, 0);
     let first = parse_probe_output(&first.stdout).unwrap();
-    assert_eq!(first.bytes, 5 * 1024, "100 + 5000 bytes rounds up to 5 KiB");
+    assert_eq!(first.bytes, 5100, "100 + 5000 bytes");
     assert_eq!(first.top, tree);
     assert_eq!(
         first.files, 2,
@@ -658,7 +660,7 @@ fn powershell_probe_round_trips_non_ascii_folder_names() {
             assert_code(&probed, 0);
             let probed = parse_probe_output(&probed.stdout).unwrap();
             assert_eq!(probed.top, tree, "{shell}");
-            assert_eq!(probed.bytes, 1024, "{shell}");
+            assert_eq!(probed.bytes, 5, "{shell}: the bytes of \"alpha\"");
         }
     }
 }

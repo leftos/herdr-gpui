@@ -70,7 +70,12 @@ fn posix_probe_checks_missing_before_not_a_folder_and_prints_five_lines() {
     assert!(digest < printed_top && absent < printed_top && printed_top < zero);
     assert!(zero < counted && counted < files);
     assert!(script.contains("case $files in ''|*[!0-9]*) exit 1 ;; esac"));
-    assert!(script.contains("du -sk -- \"$path\""));
+    // The size sums the regular files' bytes in each stat form, never `du`'s
+    // disk blocks.
+    assert!(!script.contains("du "));
+    assert!(script.contains("find \"$path\" -type f -exec stat -c '%s' -- {} +"));
+    assert!(script.contains("find \"$path\" -type f -exec stat -f '%z' -- {} +"));
+    assert!(script.contains("find \"$path\" -type f -exec ls -lnd -- {} + | awk '{print $5}'"));
     // GNU stat's `%y` carries nanoseconds, BSD's `%m` whole seconds, and
     // `ls -lnd` is the fallback for a host with neither.
     let gnu = script.find("stat -c '%n %s %y' -- \"$path\"").unwrap();
@@ -165,7 +170,11 @@ fn powershell_probe_checks_missing_before_not_a_folder_and_prints_five_lines() {
     assert!(script.contains("FileAttributes]::ReparsePoint"));
     assert!(script.contains("Sort-Object Relative"));
     assert!(script.contains("SHA256]::Create()"));
-    assert!(script.contains("Math]::Ceiling"));
+    assert!(
+        !script.contains("Math]::Ceiling"),
+        "the size is bytes, not KiB"
+    );
+    assert!(script.contains("@($total.ToString(), $digest,"));
     assert!(script.contains("ToLowerInvariant"));
 }
 

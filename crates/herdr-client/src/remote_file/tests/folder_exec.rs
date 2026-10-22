@@ -76,9 +76,7 @@ fn probe_reports_the_tree_size_and_a_stable_fingerprint() {
     set_modified(&fixture.path("tree/a.txt"), first_edit);
 
     let first = fixture.probe(&fixture.text("tree")).unwrap();
-    assert!(first.bytes >= 5010, "{first:?}");
-    assert!(first.bytes <= 256 * 1024, "{first:?}");
-    assert_eq!(first.bytes % 1024, 0);
+    assert_eq!(first.bytes, 5010, "the files' bytes; the link adds nothing");
     assert_eq!(first.top, "tree");
     assert_eq!(
         first.files, 2,
