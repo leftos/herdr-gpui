@@ -34,6 +34,7 @@ pub(crate) mod sidebar;
 mod sidebar_style;
 pub(crate) mod status_bar;
 mod status_icons;
+pub(crate) mod tab_layout;
 #[cfg(any(
     feature = "azure",
     feature = "boat",
@@ -101,6 +102,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
 };
+pub use tab_layout::TabLayoutMode;
 pub use theme::Theme;
 pub(crate) use theme::ThemeName;
 pub(crate) use theme::mix;
@@ -192,6 +194,7 @@ pub struct Config {
     /// The `[pane_keys]` table `keybindings` was built from, for the same
     /// reason.
     pub(crate) pane_keys: PaneKeys,
+    pub(crate) px0: crate::px0::Config,
     /// Size limits for copying a folder printed in an SSH pane.
     pub remote_files: RemoteFilesConfig,
     /// Whether a linked worktree whose pull request is merged is removed, and
@@ -233,6 +236,8 @@ pub struct Config {
     pub status_bar: StatusBar,
     /// The set agent status is drawn with.
     pub status_icons: StatusIcons,
+    /// How tab strips draw their tabs, from View > Tab Layout.
+    pub tab_layout: TabLayoutMode,
     pub tabs: FontConfig,
     pub terminal: FontConfig,
     /// Blank space around every terminal's cells.
@@ -469,6 +474,7 @@ impl Default for Config {
             option_as_alt: OptionAsAlt::default(),
             palette: crate::palette::PaletteConfig::default(),
             pane_keys: PaneKeys::new(),
+            px0: crate::px0::Config::default(),
             remote_files: RemoteFilesConfig::default(),
             remove_merged_worktrees: false,
             show_agents: true,
@@ -487,6 +493,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             status_bar: StatusBar::default(),
             status_icons: StatusIcons::default(),
+            tab_layout: TabLayoutMode::default(),
             // Tabs are terminal chrome, so they read in the monospace face the
             // sidebar and terminal use, as they do in the reference UI.
             tabs: font(monospace, 12.0),
@@ -538,6 +545,7 @@ struct Settings {
     option_as_alt: OptionAsAlt,
     palette: crate::palette::PaletteConfig,
     pane_keys: PaneKeys,
+    px0: crate::px0::Config,
     remote_files: RemoteFilesSettings,
     remove_merged_worktrees: Option<bool>,
     show_agents: Option<bool>,
@@ -554,6 +562,7 @@ struct Settings {
     sound: SoundConfig,
     status_bar: StatusBar,
     status_icons: Option<status_icons::SavedIcons>,
+    tab_layout: TabLayoutMode,
     tabs: FontSettings,
     terminal: FontSettings,
     theme: Option<String>,
@@ -967,6 +976,7 @@ impl Config {
         config.smooth_scroll = settings.smooth_scroll.unwrap_or(true);
         // keep-sorted end
         config.status_bar = settings.status_bar;
+        config.tab_layout = settings.tab_layout;
         let (status_icons, legacy_rail) = status_icons::SavedIcons::resolve(settings.status_icons);
         config.status_icons = status_icons;
         config.edge_rail = settings.edge_rail.unwrap_or(legacy_rail);
@@ -980,6 +990,8 @@ impl Config {
         config.option_as_alt = settings.option_as_alt;
         config.open_links_in = settings.open_links_in;
         config.code = settings.code;
+        settings.px0.check()?;
+        config.px0 = settings.px0;
         config.open_files_in = settings.open_files_in;
         config.editor_command = settings.editor_command;
         config.keep_selection_after_copy = settings.keep_selection_after_copy.unwrap_or(true);

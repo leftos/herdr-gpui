@@ -336,6 +336,12 @@ pub(super) const CATALOG: &[Entry] = &[
         "Refuse above",
         "A folder archive larger than this is not copied.",
     ),
+    entry(
+        Section::Tabs,
+        "tabs-layout",
+        "Tab layout",
+        "How tab strips draw their tabs. Also under View > Tab Layout.",
+    ),
     entry(Section::Tabs, "tabs-position", "Position", ""),
     entry(
         Section::Tabs,

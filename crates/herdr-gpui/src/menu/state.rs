@@ -72,6 +72,15 @@ pub(crate) struct MenuState {
     pub(super) remote_file: Option<crate::remote_files::Key>,
     /// The folder question the window shows.
     pub(crate) remote_folder: Option<crate::remote_files::FolderPrompt>,
+    /// The batch the destroy-cloud-devices question is about. Dropping it
+    /// unanswered cancels the batch.
+    /// The batch the create-cloud-machines question is about.
+    #[cfg(feature = "cloud")]
+    pub(super) cloud_create:
+        Option<crate::cloud::batch::Pending<crate::cloud::batch::create::Creation>>,
+    #[cfg(feature = "cloud")]
+    pub(super) cloud_destroy:
+        Option<crate::cloud::batch::Pending<Vec<crate::cloud::batch::Target>>>,
     #[cfg(feature = "coder")]
     pub(super) coder: Option<super::devices::coder::Wizard>,
     pub(super) devices_scroll: ScrollHandle,
@@ -323,6 +332,10 @@ impl MenuState {
             open_link: None,
             remote_file: None,
             remote_folder: None,
+            #[cfg(feature = "cloud")]
+            cloud_create: None,
+            #[cfg(feature = "cloud")]
+            cloud_destroy: None,
             #[cfg(feature = "coder")]
             coder: None,
             devices_scroll: ScrollHandle::new(),
@@ -397,6 +410,11 @@ impl MenuState {
         self.open_link = None;
         self.remote_file = None;
         self.remote_folder = None;
+        #[cfg(feature = "cloud")]
+        {
+            self.cloud_create = None;
+            self.cloud_destroy = None;
+        }
         #[cfg(feature = "coder")]
         {
             self.coder = None;
