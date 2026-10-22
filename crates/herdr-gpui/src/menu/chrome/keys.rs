@@ -136,6 +136,9 @@ impl HerdrWindow {
         {
             return;
         }
+        if self.menu.page == Some(Page::RemoteJoin) && self.remote_join_field_key(event, cx) {
+            return;
+        }
         if matches!(
             self.menu.page,
             Some(Page::Tab | Page::RenameTab | Page::MoveTab)
@@ -371,6 +374,9 @@ impl HerdrWindow {
             }
             "enter" if self.menu.page == Some(Page::RemoteFolder) => {
                 self.submit_remote_folder(window, cx);
+            }
+            "enter" if self.menu.page == Some(Page::RemoteJoin) => {
+                self.submit_remote_join(window, cx);
             }
             "enter" if self.menu.page == Some(Page::RemoteMissing) => {
                 self.submit_remote_missing(window, cx);

@@ -90,6 +90,9 @@ pub(crate) enum Page {
     RemoteDevices,
     /// A remote folder is large or changed, and its copy asks what to do.
     RemoteFolder,
+    /// An SSH path click whose path a raw wrap ran onto the next row; asks
+    /// which path to open before anything is fetched.
+    RemoteJoin,
     /// A file an SSH path click asked for is not on the host; offers the
     /// path to edit and open again.
     RemoteMissing,

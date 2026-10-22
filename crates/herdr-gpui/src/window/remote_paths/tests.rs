@@ -170,6 +170,123 @@ fn a_relative_path_joins_a_windows_cwd_with_backslashes() {
     assert_eq!(asked("a.md", Some(r"C:\")), powershell(r"C:\a.md"));
 }
 
+/// The shell and path a path typed for a host reading `shell` is asked as.
+fn typed(shell: RemoteShell, path: &str, cwd: Option<&str>) -> Option<(RemoteShell, String)> {
+    RemotePath::typed("me@devbox", shell, path, cwd).map(|remote| (remote.shell, remote.path))
+}
+
+#[test]
+fn a_typed_home_path_is_read_in_the_host_s_shell() {
+    use RemoteShell::{Posix, PowerShell};
+    assert_eq!(
+        typed(PowerShell, "~/notes.md", None),
+        powershell(r"~\notes.md")
+    );
+    assert_eq!(typed(PowerShell, "~", None), powershell("~"));
+    assert_eq!(typed(Posix, "~/notes.md", None), posix("~/notes.md"));
+    // A POSIX host expands only a leading `~/`.
+    assert_eq!(typed(Posix, r"~\notes.md", None), posix("~/notes.md"));
+    assert_eq!(
+        typed(Posix, r"~\docs\notes.md", None),
+        posix("~/docs/notes.md")
+    );
+    // The host's shell wins over a cwd of the other form.
+    assert_eq!(
+        typed(PowerShell, "~/notes.md", Some("/home/me")),
+        powershell(r"~\notes.md")
+    );
+    assert_eq!(typed(PowerShell, "~other/notes.md", None), None);
+}
+
+#[test]
+fn a_typed_relative_path_joins_a_cwd_in_the_host_s_form() {
+    use RemoteShell::{Posix, PowerShell};
+    assert_eq!(
+        typed(PowerShell, "src/main.rs", Some("C:/dev/app")),
+        powershell(r"C:\dev\app\src\main.rs")
+    );
+    assert_eq!(
+        typed(Posix, "./src/main.rs", Some("/home/me/app/")),
+        posix("/home/me/app/src/main.rs")
+    );
+    // No cwd, or one not absolute in the host's form, names no file.
+    assert_eq!(typed(PowerShell, "notes.md", None), None);
+    assert_eq!(typed(Posix, "notes.md", None), None);
+    assert_eq!(typed(PowerShell, "notes.md", Some("/home/me")), None);
+    assert_eq!(typed(Posix, "notes.md", Some(r"C:\dev")), None);
+    assert_eq!(typed(Posix, "", Some("/home/me")), None);
+    // A POSIX cwd that only looks like a `file://` drive path is joined as
+    // it reads.
+    assert_eq!(
+        typed(Posix, "a.md", Some("/C:/Users/me")),
+        posix("/C:/Users/me/a.md")
+    );
+    assert_eq!(
+        typed(PowerShell, "a.md", Some("/C:/Users/me")),
+        powershell(r"C:\Users\me\a.md")
+    );
+}
+
+#[test]
+fn a_typed_drive_or_unc_path_names_no_file_on_a_posix_host() {
+    use RemoteShell::Posix;
+    assert_eq!(typed(Posix, "c:/dev/notes.md", None), None);
+    assert_eq!(typed(Posix, r"C:\dev\notes.md", Some("/home/me")), None);
+    assert_eq!(
+        typed(Posix, r"\\srv\share\notes.md", Some("/home/me")),
+        None
+    );
+}
+
+#[test]
+fn a_typed_rooted_path_takes_the_drive_of_a_windows_cwd() {
+    use RemoteShell::PowerShell;
+    assert_eq!(
+        typed(PowerShell, "/proj/notes.md", Some(r"D:\proj")),
+        powershell(r"D:\proj\notes.md")
+    );
+    assert_eq!(
+        typed(PowerShell, r"\proj\notes.md", Some("d:/work")),
+        powershell(r"d:\proj\notes.md")
+    );
+    assert_eq!(
+        typed(PowerShell, "/proj/notes.md", Some("/D:/work")),
+        powershell(r"D:\proj\notes.md")
+    );
+    // With no drive to take, the session's current drive reads it.
+    assert_eq!(
+        typed(PowerShell, "/proj/notes.md", None),
+        powershell(r"\proj\notes.md")
+    );
+    assert_eq!(
+        typed(PowerShell, "/proj/notes.md", Some(r"\\srv\share")),
+        powershell(r"\proj\notes.md")
+    );
+}
+
+#[test]
+fn a_typed_absolute_path_is_read_in_the_host_s_shell() {
+    use RemoteShell::{Posix, PowerShell};
+    assert_eq!(typed(Posix, "/srv/x.md", None), posix("/srv/x.md"));
+    assert_eq!(
+        typed(PowerShell, "/srv/x.md", Some("/home/me")),
+        powershell(r"\srv\x.md")
+    );
+    assert_eq!(
+        typed(PowerShell, r"\dev\x.md", None),
+        powershell(r"\dev\x.md")
+    );
+    assert_eq!(
+        typed(PowerShell, "c:/dev/notes.md", None),
+        powershell(r"c:\dev\notes.md")
+    );
+    // A `file://` drive path loses its leading slash, as a printed one does.
+    assert_eq!(
+        typed(PowerShell, "/C:/Users/me/a.md", None),
+        powershell(r"C:\Users\me\a.md")
+    );
+}
+
 #[test]
 fn a_relative_path_without_an_absolute_cwd_has_no_remote_path() {
     assert_eq!(asked("src/main.rs", None), None);
