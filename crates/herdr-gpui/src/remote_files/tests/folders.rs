@@ -10,7 +10,7 @@ use std::io::Write;
 const PATH: &str = "/home/me/src";
 
 /// A host whose path is a folder, so a file fetch refuses it.
-fn not_a_file() -> herdr_client::Result<&'static [u8]> {
+pub(super) fn not_a_file() -> herdr_client::Result<&'static [u8]> {
     Err(herdr_client::Error::RemoteFile(RemoteFileError::NotAFile))
 }
 
@@ -94,7 +94,7 @@ fn not_a_folder() -> herdr_client::Result<ProbedFolder> {
     Err(herdr_client::Error::RemoteFile(RemoteFileError::NotAFolder))
 }
 
-fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+pub(super) fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default();
     for (path, bytes) in entries {
@@ -193,7 +193,7 @@ fn claimed(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) -
 }
 
 /// A window on `host` whose remote folder path is the one clicked.
-fn folder_window<'a>(
+pub(super) fn folder_window<'a>(
     host: &FakeHost,
     cx: &'a mut TestAppContext,
 ) -> (Entity<HerdrWindow>, &'a mut VisualTestContext) {
@@ -342,7 +342,11 @@ fn an_edited_folder_path_asks_about_the_typed_folder(cx: &mut TestAppContext) {
     let host = FakeHost::new();
     let (view, cx) = folder_window(&host, cx);
     host.serve_archive(&zip_of(&[("src/a.txt", b"a")]));
-    click(&view, cx, PATH);
+    // A POSIX host, which reads the typed path as it is written.
+    view.update(cx, |view, cx| {
+        view.open_remote_file(posix(PATH), None, None, None, cx)
+    });
+    cx.run_until_parked();
     poll(&view, cx);
     assert_eq!(page(&view, cx), Some(Page::RemoteFolder));
     cx.simulate_input("/home/me/other");
