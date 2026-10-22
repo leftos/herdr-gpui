@@ -4,14 +4,18 @@
 //! background executor; the UI thread only starts them and applies results.
 
 use super::{
-    Error, FolderDone, Io, Key, MB, Owner, RemoteFiles, Result,
+    CopyKind, Error, FolderDone, Io, Key, MB, Owner, RemoteFiles, Result,
     archive::{self, ArchiveFormat},
-    basename, cache, watch,
+    basename, cache, meta_of, remove_kept, watch,
 };
 use crate::window::{Flash, HerdrWindow, RemotePath};
 use gpui::Context;
 use herdr_client::RemoteShell;
-use std::{io, path::Path, sync::atomic::AtomicBool};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
+};
 
 /// A question about a folder that waits for the window to have no page open.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,9 +202,22 @@ impl HerdrWindow {
         let io = self.remote_files.io.clone();
         let owner = self.remote_files.owner;
         let key = (remote.target.clone(), remote.path.clone());
+        // A file copy of the same path, from before the host's path became a
+        // folder, is replaced only when it still matches this metadata.
+        let file_synced = self
+            .remote_files
+            .copies
+            .get(&key)
+            .filter(|copy| copy.kind == CopyKind::File)
+            .map(|copy| copy.synced_meta);
+        let request = Request {
+            probed,
+            cap_bytes: cap,
+            file_synced,
+        };
         let fetch = cx
             .background_executor()
-            .spawn(async move { fetch_folder(&io, owner, &remote, probed, cap) });
+            .spawn(async move { fetch_folder(&io, owner, &remote, request) });
         cx.spawn(async move |this, cx| {
             let fetched = fetch.await;
             // The window may have closed meanwhile; nothing opens then.
@@ -220,16 +237,11 @@ impl HerdrWindow {
         match fetched {
             Ok(fetched) => {
                 let local = fetched.done.local.clone();
-                let skipped = fetched.links_skipped;
+                let note = finish_note(fetched.links_skipped, fetched.kept.as_deref());
                 self.remote_files.record_folder(fetched.done);
                 self.open_in_system_app(local, None, cx);
-                if skipped > 0 {
-                    let text = if skipped == 1 {
-                        "1 link was skipped".to_owned()
-                    } else {
-                        format!("{skipped} links were skipped")
-                    };
-                    self.show_flash(Flash::success(text), cx);
+                if let Some(note) = note {
+                    self.show_flash(note, cx);
                 }
             }
             Err(error) => {
@@ -240,36 +252,74 @@ impl HerdrWindow {
     }
 }
 
+/// The flash a finished folder copy shows, if it has anything to say: the
+/// links it skipped, and the file copy it kept beside it because that copy
+/// may hold edits.
+fn finish_note(skipped: u32, kept: Option<&Path>) -> Option<Flash> {
+    let skipped = match skipped {
+        0 => None,
+        1 => Some("1 link was skipped".to_owned()),
+        _ => Some(format!("{skipped} links were skipped")),
+    };
+    let Some(kept) = kept else {
+        return skipped.map(Flash::success);
+    };
+    let name = kept.file_name().unwrap_or_default().to_string_lossy();
+    let kept = format!("The file copy's edits were kept as {name}");
+    Some(Flash::warning(match skipped {
+        Some(skipped) => format!("{kept}; {skipped}"),
+        None => kept,
+    }))
+}
+
 /// A finished folder fetch, ready to record.
 struct FolderFetched {
     done: FolderDone,
     links_skipped: u32,
+    /// Where an edited file copy of the same path was moved aside.
+    kept: Option<PathBuf>,
 }
 
 /// What one transfer left at the copy's place.
 struct Filled {
     meta: watch::Meta,
     links_skipped: u32,
+    kept: Option<PathBuf>,
 }
 
-/// Where one folder transfer writes, and the size limit it fetches under.
+/// What one folder transfer fetches, and what it may replace.
+struct Request {
+    probed: herdr_client::ProbedFolder,
+    cap_bytes: u64,
+    /// The synced metadata of a file copy at the same place, when known.
+    file_synced: Option<watch::Meta>,
+}
+
+/// Where one folder transfer writes, the size limit it fetches under, and
+/// the synced metadata of a file copy it may replace.
 struct Transfer<'a> {
     archive: &'a Path,
     staging: &'a Path,
     local: &'a Path,
     cap_bytes: u64,
+    file_synced: Option<watch::Meta>,
 }
 
 /// Fetches `remote`'s folder as an archive and extracts it at `owner`'s copy
-/// of the path, replacing any copy there. Blocking: call only on a
+/// of the path, replacing any copy there; a file copy that may hold edits is
+/// moved aside instead (see [`set_aside`]). Blocking: call only on a
 /// background worker.
 fn fetch_folder(
     io: &Io,
     owner: Owner,
     remote: &RemotePath,
-    probed: herdr_client::ProbedFolder,
-    cap_bytes: u64,
+    request: Request,
 ) -> Result<FolderFetched> {
+    let Request {
+        probed,
+        cap_bytes,
+        file_synced,
+    } = request;
     let cache = (io.cache)()?;
     let local = cache.copy_path(owner, &remote.target, &remote.path, remote.shell);
     let parent = local.parent().ok_or_else(|| Error::Cache {
@@ -287,6 +337,7 @@ fn fetch_folder(
         staging: &staging,
         local: &local,
         cap_bytes,
+        file_synced,
     };
     let filled = fill(io, remote, &probed.top, transfer, &cancelled);
     let filled = match filled {
@@ -308,6 +359,7 @@ fn fetch_folder(
             fingerprint: probed.fingerprint,
         },
         links_skipped: filled.links_skipped.saturating_add(probed.links_skipped),
+        kept: filled.kept,
     })
 }
 
@@ -341,18 +393,15 @@ fn fill(
     )?;
     // The archive is no use once unpacked; failing to remove it is not.
     remove_file(transfer.archive);
-    if transfer.local.is_dir() {
+    let kept = if transfer.local.is_dir() {
         std::fs::remove_dir_all(transfer.local).map_err(|source| Error::FolderInUse {
             path: transfer.local.to_owned(),
             source,
         })?;
-    } else if transfer.local.exists() {
-        // A file copy of the same path, before the host's path became a folder.
-        std::fs::remove_file(transfer.local).map_err(|source| Error::FolderInUse {
-            path: transfer.local.to_owned(),
-            source,
-        })?;
-    }
+        None
+    } else {
+        set_aside(transfer.local, transfer.file_synced)?
+    };
     std::fs::rename(transfer.staging, transfer.local).map_err(|source| Error::Cache {
         path: transfer.local.to_owned(),
         source,
@@ -367,7 +416,42 @@ fn fill(
     Ok(Filled {
         meta,
         links_skipped: extracted.links_skipped,
+        kept,
     })
+}
+
+/// Clears the place of a file copy at `local`, from before the host's path
+/// became a folder, without losing edits: the copy moves aside first, then
+/// is removed only when its metadata proves it the one synced at `synced`.
+/// One that may hold edits, or whose synced metadata is not known, stays
+/// beside the folder; its path is returned. Blocking.
+fn set_aside(local: &Path, synced: Option<watch::Meta>) -> Result<Option<PathBuf>> {
+    let kept = cache::kept_path(local);
+    match std::fs::rename(local, &kept) {
+        Ok(()) => {}
+        // No copy, so nothing to keep.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(Error::FolderInUse {
+                path: local.to_owned(),
+                source,
+            });
+        }
+    }
+    let unedited = match (synced, meta_of(&kept)) {
+        (Some(synced), Ok(meta)) => meta == synced,
+        (None, _) => false,
+        (Some(_), Err(error)) => {
+            tracing::warn!(%error, kept = %kept.display(), "Remote file copy moved aside not checked; keeping it");
+            false
+        }
+    };
+    if !unedited {
+        tracing::warn!(kept = %kept.display(), "A remote file copy that may hold edits was left beside its folder copy");
+        return Ok(Some(kept));
+    }
+    remove_kept(&kept);
+    Ok(None)
 }
 
 /// The archive format a host's shell sends a folder in.
