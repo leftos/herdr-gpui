@@ -55,7 +55,7 @@ fn query(format: Format, executable: &Path) -> Command {
             command.arg("-Qoq");
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     command.arg(executable);
     command
@@ -157,8 +157,10 @@ fn install_command(format: Format, path: &Path) -> Command {
             command
         }
         Format::Rpm => {
+            // dnf5 rejects "--"; the path is always absolute, so it cannot
+            // be parsed as an option.
             let mut command = herdr_client::new_command("/usr/bin/dnf");
-            command.args(["install", "--assumeyes", "--"]);
+            command.args(["install", "--assumeyes"]);
             command
         }
         Format::Arch => {
@@ -166,7 +168,7 @@ fn install_command(format: Format, path: &Path) -> Command {
             command.args(["-U", "--noconfirm", "--"]);
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     command
         .arg(path)
@@ -266,7 +268,7 @@ fn installed_version(format: Format, cancel: &AtomicBool) -> Result<String> {
             command.args(["-Q", "herdr-gpui"]);
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     let output = install::output(&mut command, cancel)?;
     Ok(output

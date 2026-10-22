@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     CheckForUpdates, Minimize, PlaySound, RunCommand, ShowHerdrNotDetected, ShowUpdatePreview,
+    ZoomWindow,
     actions::{RingBellPreview, ShowToastPreview},
     browser::Shown,
     config::ClipboardToastPosition,
@@ -25,7 +26,7 @@ impl HerdrWindow {
     /// reachable. A menu page owns the window's attention, and zen mode keeps
     /// the window clear; they wait behind either.
     fn render_notices(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu.page.is_some() || self.zen_active() {
+        if !self.notices_allowed() {
             return None;
         }
         let mut cards = self.config_diagnostic_cards(cx);
@@ -36,29 +37,66 @@ impl HerdrWindow {
         // Spans the terminal area so a narrow window shrinks the cards rather
         // than pushing them off the left edge. Each card sits in its own row:
         // a column only shrinks its children along its height, so a card with
-        // a long line kept its full width there.
+        // a long line kept its full width there. The stack ends above the
+        // window's foot, and a card that scrolls gives up height so the cards
+        // under it stay on screen; the rest keep theirs. Neither the stack nor
+        // a row takes the pointer, so the terminal around the cards scrolls
+        // and selects as before.
         Some(
             div()
                 .absolute()
                 .top(px(self.tab_strip_height() + 8.))
+                .bottom(px(8.))
                 .left(px(8.))
                 .right(px(8.))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .children(
-                    cards
-                        .into_iter()
-                        .map(|card| div().flex().justify_end().child(card)),
-                )
+                .children(cards.into_iter().map(|Notice { card, shrinks }| {
+                    div()
+                        .flex()
+                        .justify_end()
+                        .map(|row| match shrinks {
+                            true => row.min_h_0(),
+                            false => row.flex_none(),
+                        })
+                        .child(card)
+                }))
                 .into_any_element(),
         )
+    }
+}
+
+/// One card in the notice stack, and whether it scrolls, so it can give up
+/// height to keep the stack inside the window.
+pub(super) struct Notice {
+    pub(super) card: AnyElement,
+    pub(super) shrinks: bool,
+}
+
+impl HerdrWindow {
+    fn notices_allowed(&self) -> bool {
+        self.menu.page.is_none() && !self.zen_active()
+    }
+
+    /// Whether [`Self::render_notices`] draws a card, so the keyboard can
+    /// reach the cards as a region of their own.
+    pub(super) fn notices_shown(&self) -> bool {
+        self.notices_allowed()
+            && (self.gui_config_diagnostic.visible().is_some()
+                || self.icon_font_notice.visible().is_some()
+                || self
+                    .endpoints
+                    .get(self.selected_endpoint)
+                    .is_some_and(|endpoint| endpoint.config_diagnostic.visible().is_some())
+                || self.live.product_announcement().is_some())
     }
 }
 
 impl Render for HerdrWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.restore_menu_focus(window, cx);
+        self.leave_vanished_region(window, cx);
         self.sync_backdrop(window, cx);
         self.tick_chrome(window, cx);
         self.sync_device_themes(cx);
@@ -78,14 +116,21 @@ impl Render for HerdrWindow {
         // Registers the window for surface-only redraws; see `redraw_terminal`.
         self.surface_signal.read(cx);
         let sidebar = self
-            .sidebar_mode()
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
+            .sidebar_column_width(f32::from(window.viewport_size().width))
             .map(|width| {
                 (
                     crate::sidebar::cached_view(&self.sidebar_view, width),
                     width,
                 )
             });
+        // The tab strip reserves its moving marks afresh; a hidden sidebar
+        // leaves none behind.
+        if let Some(marks) = crate::mark_layer::Marks::of(window, cx) {
+            marks.begin_frame(cx.entity_id());
+            if sidebar.is_none() {
+                marks.forget(self.sidebar_view.entity_id());
+            }
+        }
         // Paints the frame on screen, which during a focus change is the one
         // presented before it: the terminal area never blanks between two
         // projections. What the client knows to be current stays in `live`.
@@ -634,9 +679,13 @@ impl Render for HerdrWindow {
             .then(|| self.active_group())
             .flatten();
         let mut terminal = Some(terminal);
-        let merged = slots
-            .first()
-            .is_some_and(|first| self.tabs_in_titlebar(first.id, cx));
+        // An activity bar section takes the body; its title bar is the
+        // window's own, with no group's tab strip in it.
+        let section = self.render_activity_section(window, cx);
+        let merged = section.is_none()
+            && slots
+                .first()
+                .is_some_and(|first| self.tabs_in_titlebar(first.id, cx));
         let count = slots.len();
         let mut groups = Vec::with_capacity(count);
         for (slot, shown) in slots.into_iter().zip(shown) {
@@ -656,14 +705,14 @@ impl Render for HerdrWindow {
                 (Shown::Terminal, _) if self.shows_parked_terminal(slot.id, cx) => {
                     self.render_parked_terminal(slot, parked_font.clone(), cell_height, cx)
                 }
-                // Review and orchestrator tabs are drawn by the app, never pages.
+                // Orchestrator tabs are dropped on load and never opened.
                 (Shown::Page(_), Some(tab))
                     if matches!(
                         tab.location,
                         Some(crate::browser::Location::Orchestrator { .. })
                     ) =>
                 {
-                    self.render_orchestrator_tab(slot, &tab)
+                    div().into_any_element()
                 }
                 (Shown::Page(_), Some(tab))
                     if tab
@@ -699,7 +748,7 @@ impl Render for HerdrWindow {
             groups.push(self.render_group(slot, body, ends, reach, window, cx));
         }
         let content = self.render_groups(groups, cx);
-        let content = self.zen_column(content);
+        let content = section.unwrap_or_else(|| self.zen_column(content));
         // Not `||`: asking forgets group motion that has finished.
         if self.groups_moving()
             | self.tabs_growing()
@@ -718,6 +767,7 @@ impl Render for HerdrWindow {
         let zen = self.zen_layout();
         let root = div()
             .capture_key_down(cx.listener(Self::application_menu_shortcut))
+            .capture_key_down(cx.listener(Self::chrome_focus_key))
             .on_modifiers_changed(cx.listener(Self::double_shift_modifiers))
             .capture_any_mouse_down(cx.listener(|this, _, _, _| this.shift_taps.cancel()))
             .child({
@@ -749,11 +799,19 @@ impl Render for HerdrWindow {
                     this.set_layout(action.mode, cx);
                 }),
             )
+            .on_action(
+                cx.listener(|this, action: &crate::actions::SetTabLayout, _, cx| {
+                    this.set_tab_layout(action.mode, cx);
+                }),
+            )
             .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
                 this.command(action.command, window, cx);
             }))
             .on_action(cx.listener(|_, _: &Minimize, window, _| {
                 window.minimize_window();
+            }))
+            .on_action(cx.listener(|_, _: &ZoomWindow, window, _| {
+                window.zoom_window();
             }))
             .on_action(cx.listener(|this, _: &ShowHerdrNotDetected, window, cx| {
                 this.show_install_modal(window, cx);
@@ -833,11 +891,6 @@ impl Render for HerdrWindow {
             .when(zen, |root| {
                 root.children(crate::titlebar::zen_inset(fill.ground(), window))
             })
-            // Under the traffic lights a banner would hide them, so with no
-            // header it moves to the window's foot.
-            .when(!merged && !zen, |root| {
-                root.children(self.render_worktree_banner())
-            })
             .child(
                 div()
                     .debug_selector(|| "window-body".into())
@@ -865,9 +918,12 @@ impl Render for HerdrWindow {
                             .children(self.zen_status_bar(cx)),
                     ),
             )
-            .when(merged && !zen, |root| {
-                root.children(self.render_worktree_banner())
-            })
+            // After the body, whose rows reserve the marks it draws, and under
+            // everything that covers the body.
+            .child(AnyView::from(self.mark_layer.clone()))
+            // At the window's foot in every layout: under the traffic lights
+            // it would hide them, and one place is easier to find.
+            .when(!zen, |root| root.children(self.render_worktree_banner()))
             .children(self.render_tab_ghost(cx))
             .children(self.render_toasts(window, cx))
             .children(self.render_file_transfer(window, cx))

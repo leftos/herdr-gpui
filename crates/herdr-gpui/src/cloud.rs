@@ -3,22 +3,28 @@
 //! add machines (with their progress and toasts), and the connector that hands
 //! a cloud target to its provider. Each provider module owns its API, sign-in,
 //! readiness rules, and the command that reaches a machine; supporting a
-//! provider adds a `CloudProvider` variant and a module.
+//! provider adds a `CloudProvider` variant, a module, and a row in
+//! [`providers`].
 
+pub(crate) mod batch;
 mod catalog;
 mod command;
+pub(crate) mod exec;
 pub(crate) mod install;
 mod jobs;
 pub(crate) mod names;
+mod providers;
 pub(crate) mod worker;
 
 pub(crate) use catalog::{SavedDevice, load, remove, rename, save};
 pub(crate) use command::with_command;
 pub(crate) use herdr_client::CloudProvider;
 pub(crate) use jobs::Jobs;
+pub(crate) use providers::{
+    Deletion, Shape, Spec, connect, deletion, icon, name, noun, offer, provision,
+};
 
-use herdr_client::{ConnectTarget, Transport};
-use std::{io, path::PathBuf, sync::atomic::AtomicBool};
+use std::{io, path::PathBuf};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -63,7 +69,12 @@ pub(crate) fn unavailable() -> Option<&'static str> {
 /// What a job reports while it adds a machine, in words every provider shares.
 // Railway reports only the steps it has; the rest belong to the others.
 #[cfg_attr(
-    not(any(feature = "boat", feature = "coder", feature = "daytona")),
+    not(any(
+        feature = "azure",
+        feature = "boat",
+        feature = "coder",
+        feature = "daytona"
+    )),
     allow(dead_code)
 )]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +92,18 @@ pub(crate) enum Step {
 }
 
 impl Step {
+    /// About how far along a job at this step is, for a progress bar: a
+    /// build's own steps take the most time.
+    pub(crate) fn progress(&self) -> f32 {
+        match self {
+            Self::Creating => 0.15,
+            Self::Connecting => 0.25,
+            Self::Starting | Self::Building(_) => 0.4,
+            Self::CheckingHerdr => 0.7,
+            Self::InstallingHerdr => 0.85,
+        }
+    }
+
     pub(crate) fn text(&self) -> String {
         match self {
             Self::Creating => "Creating…".into(),
@@ -93,87 +116,35 @@ impl Step {
     }
 }
 
-/// The provider's name, as the UI shows it.
-pub(crate) fn name(provider: CloudProvider) -> &'static str {
-    match provider {
-        #[cfg(feature = "boat")]
-        CloudProvider::Boat => "Boat",
-        #[cfg(feature = "coder")]
-        CloudProvider::Coder => "Coder",
-        #[cfg(feature = "daytona")]
-        CloudProvider::Daytona => "Daytona",
-        #[cfg(feature = "railway")]
-        CloudProvider::Railway => "Railway",
-    }
-}
-
-/// The provider's logo, an embedded asset path.
-pub(crate) fn icon(provider: CloudProvider) -> &'static str {
-    match provider {
-        #[cfg(feature = "boat")]
-        CloudProvider::Boat => "icons/terminal.svg",
-        #[cfg(feature = "coder")]
-        CloudProvider::Coder => "icons/cloud/coder.svg",
-        #[cfg(feature = "daytona")]
-        CloudProvider::Daytona => "icons/cloud/daytona.svg",
-        #[cfg(feature = "railway")]
-        CloudProvider::Railway => "icons/cloud/railway.svg",
-    }
-}
-
-/// What adding a device from the provider does, as Add Device says it.
-pub(crate) fn offer(provider: CloudProvider) -> &'static str {
-    match provider {
-        #[cfg(feature = "boat")]
-        CloudProvider::Boat => "Create a Boat sandbox in Settings",
-        #[cfg(feature = "coder")]
-        CloudProvider::Coder => "Create or attach a Coder workspace",
-        // Sandboxes are created in Settings; existing ones cannot be
-        // attached yet.
-        #[cfg(feature = "daytona")]
-        CloudProvider::Daytona => "Create a Daytona sandbox in Settings",
-        #[cfg(feature = "railway")]
-        CloudProvider::Railway => "Set up a Railway VM in Settings",
-    }
-}
-
-/// What the provider calls one machine.
-pub(crate) fn noun(provider: CloudProvider) -> &'static str {
-    match provider {
-        #[cfg(feature = "boat")]
-        CloudProvider::Boat => "sandbox",
-        #[cfg(feature = "coder")]
-        CloudProvider::Coder => "workspace",
-        #[cfg(feature = "daytona")]
-        CloudProvider::Daytona => "sandbox",
-        #[cfg(feature = "railway")]
-        CloudProvider::Railway => "VM",
-    }
-}
-
-/// The connector for `ConnectTarget::Cloud`: the provider makes the machine
-/// ready and spawns the bridge command. Runs on the connection worker.
-pub(crate) fn connect(target: &ConnectTarget, stop: &AtomicBool) -> io::Result<Transport> {
-    let ConnectTarget::Cloud {
-        provider,
-        account,
-        id,
-        session,
-        ..
-    } = target
-    else {
-        return Err(io::Error::other(Error::Invalid("cloud target")));
-    };
-    match provider {
-        #[cfg(feature = "boat")]
-        CloudProvider::Boat => crate::boat::connect(account, id, session, stop),
-        #[cfg(feature = "coder")]
-        CloudProvider::Coder => crate::coder::connect(account, id, session, stop),
-        #[cfg(feature = "daytona")]
-        CloudProvider::Daytona => crate::daytona::connect(account, id, session, stop),
-        #[cfg(feature = "railway")]
-        CloudProvider::Railway => crate::railway::connect(account, id, session, stop),
-    }
+/// Finish a machine the provider has just made with `finish`, and delete it
+/// with `discard` when that fails. A create that fails before the device is
+/// saved would otherwise leave the machine billing with no saved device to
+/// find it by. A failed delete is logged; `finish`'s error is returned
+/// either way.
+#[cfg_attr(not(any(feature = "coder", feature = "daytona")), allow(dead_code))]
+pub(crate) fn discard_on_error<T>(
+    provider: CloudProvider,
+    id: &str,
+    finish: impl FnOnce() -> crate::Result<T>,
+    discard: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<T> {
+    finish().inspect_err(|_| {
+        tracing::info!(
+            category = "cloud",
+            ?provider,
+            id,
+            "Deleting a failed create"
+        );
+        if let Err(error) = discard() {
+            tracing::warn!(
+                category = "cloud",
+                ?provider,
+                id,
+                %error,
+                "Could not delete a failed create; delete it at the provider"
+            );
+        }
+    })
 }
 
 #[cfg(test)]

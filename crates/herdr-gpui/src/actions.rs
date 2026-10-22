@@ -15,6 +15,7 @@ actions!(
         HideOthers,
         ShowAll,
         Minimize,
+        ZoomWindow,
         PlaySound,
         RingBellPreview,
         ShowHerdrNotDetected,
@@ -66,6 +67,13 @@ pub(crate) struct RunCommand {
 #[action(no_json)]
 pub(crate) struct SetLayout {
     pub(crate) mode: crate::config::LayoutMode,
+}
+
+/// Picks how tab strips draw their tabs, from View > Tab Layout.
+#[derive(Clone, PartialEq, serde::Deserialize, Action)]
+#[action(no_json)]
+pub(crate) struct SetTabLayout {
+    pub(crate) mode: crate::config::TabLayoutMode,
 }
 
 #[derive(Clone, PartialEq, serde::Deserialize, Action)]
@@ -158,6 +166,17 @@ pub(crate) fn edit_modifiers(modifiers: Modifiers) -> bool {
         && !modifiers.function
         && ((modifiers.platform && !modifiers.control && !modifiers.shift)
             || (CTRL_SHORTCUTS && modifiers.control && !modifiers.platform))
+}
+
+/// Whether a field moves or deletes by word on an arrow, Backspace, or
+/// Delete: Option on macOS, Ctrl on the other desktops. Shift extends.
+pub(crate) fn word_modifiers(modifiers: Modifiers) -> bool {
+    let (word, other) = if cfg!(target_os = "macos") {
+        (modifiers.alt, modifiers.control)
+    } else {
+        (modifiers.control, modifiers.alt)
+    };
+    word && !other && !modifiers.platform && !modifiers.function
 }
 
 /// macOS's Hide, Hide Others, and Minimize, bound there alone.

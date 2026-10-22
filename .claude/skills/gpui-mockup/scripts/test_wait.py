@@ -1,5 +1,6 @@
 """Isolated receiver tests: no running app or personal control socket is used."""
 
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,29 @@ def sh_quote(value):
     return f'"{escaped}"'
 
 
+def process_exists(pid):
+    """Return whether `pid` names a running process."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+    # os.kill(pid, 0) is not a liveness probe on Windows: it raises
+    # WinError 87 for any pid, so ask the kernel for the exit code instead.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
 class WaitTests(unittest.TestCase):
     def setUp(self):
         if BASH is None:
@@ -36,7 +60,7 @@ class WaitTests(unittest.TestCase):
         app.parent.mkdir(parents=True)
         fake = app.with_name("fake_app.py")
         fake.write_text(
-            "import json, os, pathlib, sys, time\n"
+            "import json, os, pathlib, signal, sys, time\n"
             "root = pathlib.Path(os.environ['TEST_ROOT'])\n"
             "(root / 'called').write_text(json.dumps(sys.argv[1:]))\n"
             "mode = os.environ['TEST_MODE']\n"
@@ -45,8 +69,9 @@ class WaitTests(unittest.TestCase):
             "    sys.exit(0)\n"
             "if mode == 'waiting':\n"
             "    (root / 'pid').write_text(str(os.getpid()))\n"
-            "    while True:\n"
-            "        time.sleep(1)\n"
+            # Windows has no signal.pause; sleeping keeps the request open
+            # until wait.sh stops it.
+            "    signal.pause() if hasattr(signal, 'pause') else time.sleep(60)\n"
             "if mode == 'refused':\n"
             "    sys.stderr.write('Request refused\\n')\n"
             "    sys.exit(1)\n"
@@ -136,14 +161,7 @@ class WaitTests(unittest.TestCase):
             self.assertEqual(json.loads((self.root / "called").read_text()),
                              ["browser", "feedback", "--wait", "60"])
             self.assertEqual(Path(f"{self.feedback}.1").read_text(), stdout)
-            with self.assertRaises(OSError) as gone:
-                os.kill(int(pid_file.read_text()), 0)
-            # Windows reports a gone pid as WinError 87 (invalid parameter),
-            # not ProcessLookupError; any other error leaves the child unproven.
-            if os.name == "nt":
-                self.assertEqual(gone.exception.winerror, 87)
-            else:
-                self.assertIsInstance(gone.exception, ProcessLookupError)
+            self.assertFalse(process_exists(int(pid_file.read_text())))
         finally:
             if process.poll() is None:
                 process.terminate()

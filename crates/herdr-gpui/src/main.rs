@@ -4,6 +4,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod about;
+mod accessibility;
 mod actions;
 mod agent_notes;
 mod agent_skill;
@@ -12,11 +13,14 @@ mod app;
 mod app_badge;
 mod app_icon;
 mod avatars;
+#[cfg(feature = "azure")]
+mod azure;
 mod backdrop;
 mod bell;
 #[cfg(feature = "boat")]
 mod boat;
 mod browser;
+mod cache;
 mod caffeine;
 mod caption;
 mod checkpoint;
@@ -26,6 +30,7 @@ mod close_modal;
 #[cfg(all(
     feature = "cloud",
     not(any(
+        feature = "azure",
         feature = "boat",
         feature = "coder",
         feature = "daytona",
@@ -33,7 +38,7 @@ mod close_modal;
     ))
 ))]
 compile_error!(
-    "the `cloud` feature is enabled through a provider feature, such as `boat`, `coder`, `daytona`, or `railway`"
+    "the `cloud` feature is enabled through a provider feature, such as `azure`, `boat`, `coder`, `daytona`, or `railway`"
 );
 #[cfg(feature = "cloud")]
 mod cloud;
@@ -52,6 +57,7 @@ mod contrast;
 mod control;
 mod controls;
 mod copy_mode;
+mod crash;
 mod daemon;
 #[cfg(feature = "daytona")]
 mod daytona;
@@ -78,6 +84,8 @@ mod integrations;
 #[cfg(windows)]
 mod jump_list;
 mod keymap;
+#[cfg(windows)]
+mod launch_at_login;
 mod lenient;
 mod link;
 mod links;
@@ -85,6 +93,7 @@ mod listening_ports;
 mod local_path;
 mod log_window;
 mod login_env;
+mod mark_layer;
 mod menu;
 mod menus;
 mod merged_cleanup;
@@ -96,6 +105,8 @@ mod network_quality;
 mod notifications;
 mod orchestrator;
 mod osc52;
+mod overview;
+mod owned_process;
 mod palette;
 mod pane_menu;
 mod pane_move;
@@ -105,18 +116,22 @@ mod port_forward;
 mod pr_actions;
 mod preferences;
 mod presentation;
+mod private_file;
 mod processes;
 mod progress;
 mod pull_request;
+mod px0;
 #[cfg(feature = "railway")]
 mod railway;
 mod release_notes;
 mod remote_browser;
 mod reorder;
 mod repo_items;
+mod restart_manager;
 mod review;
 mod scrollback;
 mod search_input;
+mod security;
 mod sessions;
 mod settings_panel;
 mod settings_window;
@@ -129,6 +144,7 @@ mod state;
 mod state_file;
 mod storage_warning;
 mod system_load;
+mod tab_layout;
 mod tab_menu;
 mod taskbar;
 mod teleport;
@@ -143,6 +159,7 @@ mod updater;
 mod usage;
 mod window;
 mod window_state;
+mod words;
 mod worktree;
 mod worktree_banner;
 mod worktree_notes;
@@ -160,7 +177,7 @@ pub use error::{Error, Result};
 pub(crate) use {
     actions::{
         CheckForUpdates, Hide, HideOthers, Minimize, PlaySound, Quit, RunCommand, ShowAll,
-        ShowHerdrNotDetected, ShowLogs, ShowUpdatePreview, bind_keys,
+        ShowHerdrNotDetected, ShowLogs, ShowUpdatePreview, ZoomWindow, bind_keys,
     },
     app::open_additional_window,
     constants::{APP_VERSION, RELEASE_BUILD, TAB_HEIGHT, TAB_WIDTH, WINDOW_TITLE},

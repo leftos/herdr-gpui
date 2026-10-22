@@ -1,22 +1,27 @@
 use super::*;
 use chrono::{DateTime, Utc};
 
-#[cfg(unix)]
 mod actions;
 mod beads;
+mod beads_only;
+mod e2e;
+mod fake_github;
 mod full_listing;
+mod git;
 mod github;
 mod gitlab;
 mod incremental;
 mod keys;
 mod location;
 mod naming;
+mod project_fixtures;
 mod prompt;
 mod repo;
-mod retry;
-/// The worker reads the repository through a host script, which only Unix
-/// hosts run; Windows reports `ScriptUnsupported`, as the app does there.
+mod repo_output;
 #[cfg(unix)]
+mod repo_script;
+mod restart;
+mod retry;
 mod service;
 mod store;
 

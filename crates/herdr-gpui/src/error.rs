@@ -1,11 +1,9 @@
 //! Internal failures retain their categories and sources until presentation.
 pub use crate::updater::UpdateError;
+pub use clipboard::ClipboardError;
 use daemon::daemon_error_message;
 pub use github::{GitHubAccountsError, GitHubJsonError};
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+use std::{io, path::PathBuf};
 pub use theme::ThemeParseError;
 
 #[cfg(any(target_os = "macos", windows))]
@@ -22,6 +20,9 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[cfg(feature = "azure")]
+    #[error(transparent)]
+    Azure(#[from] crate::azure::Error),
     #[error(transparent)]
     Backdrop(#[from] crate::backdrop::Error),
     #[cfg(feature = "boat")]
@@ -74,21 +75,18 @@ pub enum Error {
     Client(#[from] herdr_client::Error),
     #[error("HERDR_GITHUB_OAUTH_CLIENT_ID must be UTF-8")]
     ClientIdEncoding,
-    #[error("The clipboard changed while reading. Try pasting again.")]
-    ClipboardChanged,
-    #[error("Clipboard text is not valid UTF-8.")]
-    ClipboardEncoding(#[source] std::str::Utf8Error),
-    #[error("Could not read the clipboard; on Linux, install wl-paste or xclip.")]
-    ClipboardProcess(#[source] io::Error),
-    #[error("Clipboard content exceeds the {limit}-byte limit.")]
-    ClipboardSize { limit: usize },
-    #[error("Clipboard acquisition timed out.")]
-    ClipboardTimeout,
-    #[error("Remote clipboard acquisition is not supported on this platform.")]
-    ClipboardUnsupported,
+    #[error(transparent)]
+    Clipboard(#[from] ClipboardError),
     #[cfg(feature = "cloud")]
     #[error(transparent)]
     Cloud(#[from] crate::cloud::Error),
+    #[cfg(feature = "cloud")]
+    #[error(transparent)]
+    CloudBatch(#[from] crate::cloud::batch::Error),
+    /// Only CPU and memory are sampled on an Azure machine so far.
+    #[cfg(feature = "azure")]
+    #[error("This is not available for cloud machines yet.")]
+    CloudHostUnsupported,
     #[error(transparent)]
     CloudSetup(#[from] crate::cloud_setup::Error),
     #[error(transparent)]
@@ -502,6 +500,9 @@ pub enum Error {
         command: &'static str,
         keystroke: String,
     },
+    #[cfg(windows)]
+    #[error(transparent)]
+    LaunchAtLogin(#[from] crate::launch_at_login::Error),
     #[error("File not found: {}", path.display())]
     LinkedFileMissing { path: PathBuf },
     #[error("This link names a file on another computer, {host}. It is not opened from here.")]
@@ -552,6 +553,8 @@ pub enum Error {
     NotInCheckout,
     #[error("Could not read the orchestrator's database: {0}")]
     OrchestratorItems(#[source] crate::orchestrator::Error),
+    #[error(transparent)]
+    Overview(#[from] crate::overview::Error),
     #[cfg(target_os = "macos")]
     #[error("The window has no view to place a page beneath")]
     PageStack,
@@ -671,22 +674,8 @@ pub enum Error {
     PrMetadata,
     #[error("No local worktree matches the daemon branch.")]
     PrMissingWorktree,
-    #[error("Herdr's answer about the pane's process was not understood.")]
-    ProcessesAnswer(#[source] serde_json::Error),
-    #[error("Still ending the last processes. Try again in a moment.")]
-    ProcessesBusy,
-    #[error("The herdr executable's path is not valid UTF-8.")]
-    ProcessesExecutable,
-    #[error("Herdr did not name a process for this pane.")]
-    ProcessesNoRoot,
-    #[error("Could not ask Herdr which process the pane runs.")]
-    ProcessesQuery(#[source] herdr_client::Error),
-    #[error("The pane's process has exited.")]
-    ProcessesRootExited,
-    #[error("The process list stopped updating. Reopen it to try again.")]
-    ProcessesStopped,
-    #[error("Could not start watching the pane's processes.")]
-    ProcessesWorker(#[source] io::Error),
+    #[error(transparent)]
+    Processes(#[from] crate::processes::Error),
     #[error("PR lookup supports GitHub.com origins only.")]
     PrOrigin,
     #[error("Could not {operation} for Git PR lookup.")]
@@ -711,6 +700,8 @@ pub enum Error {
     PrWorkspaceRepository,
     #[error("Local repository unavailable for worktree lookup.")]
     PrWorktreeLookup,
+    #[error(transparent)]
+    Px0(#[from] crate::px0::Error),
     #[cfg(feature = "railway")]
     #[error(transparent)]
     Railway(#[from] crate::railway::Error),
@@ -788,26 +779,8 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("Audio playback cancelled")]
-    SoundCancelled,
-    #[error("Sound configuration exceeds 1 MiB")]
-    SoundConfigSize,
-    #[error("Could not decode MP3 sound: {0}")]
-    SoundDecode(#[from] rodio::decoder::DecoderError),
-    #[error("Could not open audio output: {0}")]
-    SoundDevice(#[from] rodio::DeviceSinkError),
-    #[error("Could not read sound file {}: {source}", path.display())]
-    SoundFile {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("Sound must be a regular file of at most 16 MiB")]
-    SoundFileSize,
-    #[error("Audio output failed: {0}")]
-    SoundStream(#[from] rodio::cpal::StreamError),
-    #[error("Audio playback timed out")]
-    SoundTimeout,
+    #[error(transparent)]
+    Sound(#[from] crate::sound::Error),
     #[error("Could not read {}: {source}", path.display())]
     SshConfig {
         path: PathBuf,
@@ -833,6 +806,8 @@ pub enum Error {
     /// The host's `uname -s`, bounded, so the message names what it is.
     #[error("CPU and memory cannot be read on {0:?} hosts.")]
     SystemLoadUnsupported(String),
+    #[error(transparent)]
+    TabLayout(#[from] crate::config::tab_layout::Error),
     #[error("Tailscale returned an unreadable status: {0}")]
     TailscaleJson(#[source] serde_json::Error),
     #[error("Tailscale did not answer in time")]
@@ -863,14 +838,8 @@ pub enum Error {
     TooManyKeystrokes(&'static str),
     #[error("pane_keys must list at most {0} keystrokes")]
     TooManyPaneKeys(usize),
-    #[error("SSH ended before the tunnel opened ({0}).")]
-    TunnelExited(std::process::ExitStatus),
-    #[error("No free local port for an SSH tunnel.")]
-    TunnelPort(#[source] io::Error),
-    #[error("Could not start ssh for a tunnel.")]
-    TunnelStart(#[source] io::Error),
-    #[error("The SSH tunnel did not open in time.")]
-    TunnelTimeout,
+    #[error(transparent)]
+    Tunnel(#[from] crate::listening_ports::TunnelError),
     #[error("Herdr UI has no setting {}; config-gpui.toml lists every setting", .0.join(", "))]
     UnknownConfigKeys(Vec<String>),
     #[error("keybindings.{0} is not a command; see the keybindings list in config-gpui.toml")]
@@ -966,8 +935,7 @@ pub enum Error {
     WorktreeScriptsUnsupportedHost,
     #[error("Select a checkout from the daemon's worktree list.")]
     WorktreeSelection,
-    /// A shell into a WSL distribution starts through `wsl.exe`, which only a
-    /// Windows client has.
+    /// WSL shells start through `wsl.exe`, which only a Windows client has.
     #[error("WSL distributions can only be reached from Windows.")]
     WslHostUnsupported,
     #[error("Another drop's paths are still being mapped in WSL. Try again in a moment.")]
@@ -977,18 +945,11 @@ pub enum Error {
     // keep-sorted end
 }
 
-impl Error {
-    pub(crate) fn at_path(self, path: &Path) -> Self {
-        Self::Path {
-            path: path.to_owned(),
-            source: Box::new(self),
-        }
-    }
-}
-
+mod clipboard;
 mod config;
 mod daemon;
 mod github;
+mod path;
 mod theme;
 
 #[cfg(test)]

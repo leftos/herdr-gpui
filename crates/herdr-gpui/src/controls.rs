@@ -45,6 +45,10 @@ pub enum Command {
     TabNumber(u8),
     ToggleSidebar,
     ToggleStatusBar,
+    /// Moves keyboard focus to the next of the terminal, the title bar, the
+    /// sidebar, and the status bar, where Tab moves between controls.
+    FocusNextRegion,
+    FocusPreviousRegion,
     /// Hides the window's chrome and every group but the one in use.
     ToggleZenMode,
     DevicesOverview,
@@ -75,6 +79,7 @@ pub enum Command {
     InstallBrowserSkill,
     SplitEditor,
     OpenCode,
+    OpenPx0,
     ToggleFullScreen,
     CycleWindows,
     /// Closes the window it runs in, leaving the daemon and its terminals.
@@ -532,6 +537,16 @@ pub const COMMANDS: &[CommandInfo] = &[
         label: "Toggle Status Bar",
     },
     CommandInfo {
+        command: Command::FocusNextRegion,
+        name: "focus_next_region",
+        label: "Focus Next Region",
+    },
+    CommandInfo {
+        command: Command::FocusPreviousRegion,
+        name: "focus_previous_region",
+        label: "Focus Previous Region",
+    },
+    CommandInfo {
         command: Command::ToggleZenMode,
         name: "toggle_zen_mode",
         label: "Toggle Zen Mode",
@@ -634,7 +649,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::OpenOrchestrator,
         name: "open_orchestrator",
-        label: "Open Orchestrator",
+        label: "Show Issues",
     },
     CommandInfo {
         command: Command::InstallBrowserSkill,
@@ -650,6 +665,11 @@ pub const COMMANDS: &[CommandInfo] = &[
         command: Command::OpenCode,
         name: "open_code",
         label: "Open VS Code",
+    },
+    CommandInfo {
+        command: Command::OpenPx0,
+        name: "open_px0",
+        label: "Open px0",
     },
     CommandInfo {
         command: Command::ToggleFullScreen,
@@ -815,6 +835,8 @@ pub fn request(command: Command, snapshot: &ClientShellSnapshot) -> Option<(Meth
         | Command::AnnotateSelection
         | Command::ToggleSidebar
         | Command::ToggleStatusBar
+        | Command::FocusNextRegion
+        | Command::FocusPreviousRegion
         | Command::ToggleZenMode
         | Command::DevicesOverview
         | Command::IncreaseFontSize
@@ -840,6 +862,7 @@ pub fn request(command: Command, snapshot: &ClientShellSnapshot) -> Option<(Meth
         | Command::InstallBrowserSkill
         | Command::SplitEditor
         | Command::OpenCode
+        | Command::OpenPx0
         | Command::ToggleFullScreen
         | Command::CycleWindows
         | Command::CloseWindow

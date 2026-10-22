@@ -18,7 +18,9 @@
 # brings up a dismissible card naming a Nerd Font to install.
 # Saved changes to the local file reload automatically in every GUI window.
 
-# Built-ins: Default, Nord, Dracula, Catppuccin Mocha, Catppuccin Latte.
+# Built-ins: Default, Nord, Dracula, Catppuccin Mocha, Catppuccin Latte, plus
+# popular Ghostty themes compiled in, such as TokyoNight, Gruvbox Dark,
+# Rose Pine, Atom One Dark, and GitHub Light Default (Settings lists them all).
 # Also accepts a Ghostty theme name, an absolute path, or a ~/ path.
 # Set "Follow Herdr" in config-gpui.local.toml to follow the local Herdr theme.
 # On an Omarchy desktop, "Omarchy" follows its current theme as it switches,
@@ -69,12 +71,14 @@ show_sidebar_search = true
 # name in the sidebar, in the layouts that draw one (not orca or minimal).
 # Also under Settings > Sidebar.
 show_repository_icons = true
-# Draw agent status as icons instead of Herdr's dots or symbols: "solid"
-# (filled discs), "tiles" (each mark on a tinted tile), or "rail" (outline
-# marks plus a bar on the edge of each working, done, or blocked row). Only
-# this app draws them; unset follows Herdr's `ui.status_indicators`.
-# Also under Settings > Notifications > Icons.
-# status_icons = "solid"
+# How agent status is drawn: "dots" (the default), "solid", "outline",
+# "tiles", "wave" (Superset's grid), "braille", or "orca". Only this app reads
+# it; Herdr's `ui.status_indicators` stays the terminal client's. Working always
+# moves. Also under Settings > Appearance > Indicators.
+# status_icons = "dots"
+# Draw a bar on the leading edge of each working, done, or blocked row, with
+# any set. Also under Settings > Appearance > Indicators.
+# edge_rail = false
 # Show a mark before each device's name in the sidebar for where it runs: this
 # machine, a cloud provider, Tailscale, or SSH. In the layouts that draw one
 # (not orca or minimal). Also under Settings > Sidebar.
@@ -104,6 +108,12 @@ show_network_quality = false
 # and momentum; false scrolls by whole rows. Applications reading the mouse
 # always get whole rows. Also under Settings > General.
 smooth_scroll = true
+# Linux only: draw minimize, maximize, and close buttons at the right end of the
+# menu bar. When true the window needs no title bar from the window manager;
+# disable server-side decorations in your compositor or window manager settings.
+# On Wayland without server-side decorations (GNOME), buttons are always shown
+# regardless of this setting.
+# show_window_controls = true
 
 # Focus split terminal panes on hover in the active window, without clicking.
 focus_follows_mouse = true
@@ -145,6 +155,12 @@ keep_selection_after_copy = true
 # only) draw rows with a design of their own. "devices" lists each device with
 # its agents under it, and a search over them. View > Layout lists them all.
 layout = "normal"
+# How tab strips draw their tabs: "classic" (even cells divided by a rule),
+# "pills" (rounded pills led by the agent's logo, the status after the title),
+# "underline" (flat titles, a bar under the chosen one), "cards" (browser-like,
+# the chosen tab joined to its terminal), or "compact" (icons only, the chosen
+# tab named). View > Tab Layout lists them all.
+tab_layout = "classic"
 
 [palette]
 # Two short Shift taps open the unified palette in the focused GUI window.
@@ -330,6 +346,19 @@ size = 12
 # keep their shortcuts and command palette entries, and Devices Overview in
 # the palette still offers Add Device.
 # device_footer = "always"
+# Whose +added/-deleted line counts a worktree row shows: "pr" (its cached
+# pull request's) or "local" (the checkout's uncommitted changes against HEAD,
+# for checkouts on this machine, drawn inside the pencil chip that marks
+# uncommitted work). Only one set is shown. Local counts reuse
+# the uncommitted-work probe's slow schedule: one checkout at a time, each at
+# most every 30 seconds while the window is active.
+# change_counts = "pr"
+
+# The activity bar: an icon column at the window's left edge. Workspaces is
+# the sidebar beside the terminals; Orchestrator, Pull requests, and Issues
+# show the focused workspace's orchestrator across the window on that list.
+# Settings sits at its foot. false keeps the plain sidebar.
+# activity_bar = true
 
 # A colour per host, keyed by the host's name in the sidebar, as #rgb or
 # #rrggbb. It washes the host's header, its workspace rows, and its agents'
@@ -393,6 +422,12 @@ size = 12
 # port = 51234
 # license_accepted = true
 # url = "http://127.0.0.1:8000/?tkn=..."
+
+# px0 in an editor tab (local workspaces on macOS and Windows). With no url,
+# discover an existing workbench, or start installed px0 lazily. Set a local
+# workbench address to attach to your own. Settings > Code edits this value.
+# [px0]
+# url = "http://127.0.0.1:7777/"
 
 # Native GitHub sign-in uses the public Herdr GPUI GitHub App by default.
 # Optionally override with your own Device Flow-enabled app's public client ID.

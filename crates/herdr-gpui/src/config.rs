@@ -9,6 +9,7 @@ use crate::{
 };
 mod accent;
 mod agents_placement;
+mod azure;
 pub(crate) mod backdrop;
 mod bitmap_fonts;
 mod boat;
@@ -32,7 +33,13 @@ pub(crate) mod sidebar;
 mod sidebar_style;
 pub(crate) mod status_bar;
 mod status_icons;
-#[cfg(any(feature = "boat", feature = "coder", feature = "daytona"))]
+pub(crate) mod tab_layout;
+#[cfg(any(
+    feature = "azure",
+    feature = "boat",
+    feature = "coder",
+    feature = "daytona"
+))]
 mod table;
 pub(crate) use sidebar_style::parse_hex;
 mod theme;
@@ -42,6 +49,9 @@ mod zen;
 
 pub use accent::Accent;
 pub use agents_placement::AgentsPlacement;
+pub use azure::AzureConfig;
+#[cfg(feature = "azure")]
+pub(crate) use azure::AzureFields;
 pub use backdrop::{Backdrop, Material};
 pub use boat::BoatConfig;
 #[cfg(feature = "boat")]
@@ -79,7 +89,7 @@ pub(crate) use sidebar::{
     AgentLayout, AgentToken, MAX_ROWS as MAX_SIDEBAR_ROWS, Rows, SidebarConfigError, SidebarLayout,
     SidebarScope, SpaceLayout, SpaceToken, TokenStyle,
 };
-pub(crate) use sidebar_style::DeviceFooter;
+pub(crate) use sidebar_style::{ChangeCounts, DeviceFooter};
 pub use sidebar_style::{SelectMode, SidebarOverrides, SidebarStyle};
 pub use status_bar::StatusBar;
 pub use status_icons::StatusIcons;
@@ -89,6 +99,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
 };
+pub use tab_layout::TabLayoutMode;
 pub use theme::Theme;
 pub(crate) use theme::ThemeName;
 pub(crate) use theme::mix;
@@ -122,6 +133,7 @@ pub struct Config {
     /// Where the sidebar lists agents while `show_agents` is on.
     pub agents_placement: AgentsPlacement,
     /// What shows behind the main window's terminals and chrome.
+    pub azure: AzureConfig,
     pub backdrop: Backdrop,
     pub bell: BellConfig,
     pub boat: BoatConfig,
@@ -143,6 +155,9 @@ pub struct Config {
     pub daytona: DaytonaConfig,
     /// Per saved device, by catalog profile ID.
     pub(crate) devices: BTreeMap<String, DeviceSettings>,
+    /// A bar on the leading edge of each working, blocked, or done row,
+    /// whichever status icons are drawn.
+    pub edge_rail: bool,
     /// How the editor starts; the pane's `$VISUAL` or `$EDITOR` when unset.
     pub(crate) editor_command: Option<crate::editor::EditorCommand>,
     pub features: Features,
@@ -176,6 +191,7 @@ pub struct Config {
     /// The `[pane_keys]` table `keybindings` was built from, for the same
     /// reason.
     pub(crate) pane_keys: PaneKeys,
+    pub(crate) px0: crate::px0::Config,
     /// Whether a linked worktree whose pull request is merged is removed, and
     /// its workspace closed, without asking. The focused workspace still asks.
     pub remove_merged_worktrees: bool,
@@ -199,6 +215,9 @@ pub struct Config {
     pub show_sidebar_search: bool,
     /// CPU and memory of the selected host in the status bar.
     pub show_system_load: bool,
+    /// Draw minimize, maximize, and close buttons in the menu bar on Linux.
+    /// When true the window needs no title bar from the window manager.
+    pub show_window_controls: bool,
     pub sidebar: FontConfig,
     /// Daemon sidebar rows, falling back to defaults when invalid.
     pub sidebar_layout: SidebarLayout,
@@ -210,8 +229,10 @@ pub struct Config {
     pub sound: SoundConfig,
     /// Which status bar items show, and how compactly.
     pub status_bar: StatusBar,
-    /// Drawn status icons in place of Herdr's dots or symbols; `None` follows Herdr.
-    pub status_icons: Option<StatusIcons>,
+    /// The set agent status is drawn with.
+    pub status_icons: StatusIcons,
+    /// How tab strips draw their tabs, from View > Tab Layout.
+    pub tab_layout: TabLayoutMode,
     pub tabs: FontConfig,
     pub terminal: FontConfig,
     /// Blank space around every terminal's cells.
@@ -414,6 +435,7 @@ impl Default for Config {
             accent: Accent::default(),
             agent_checkpoints: true,
             agents_placement: AgentsPlacement::default(),
+            azure: AzureConfig::default(),
             backdrop: Backdrop::default(),
             bell: BellConfig::default(),
             boat: BoatConfig::default(),
@@ -428,6 +450,7 @@ impl Default for Config {
             contrast: Contrast::default(),
             daytona: DaytonaConfig::default(),
             devices: BTreeMap::new(),
+            edge_rail: false,
             editor_command: None,
             features: Features::default(),
             focus_follows_mouse: true,
@@ -446,6 +469,7 @@ impl Default for Config {
             option_as_alt: OptionAsAlt::default(),
             palette: crate::palette::PaletteConfig::default(),
             pane_keys: PaneKeys::new(),
+            px0: crate::px0::Config::default(),
             remove_merged_worktrees: false,
             show_agents: true,
             show_agents_header: true,
@@ -455,13 +479,15 @@ impl Default for Config {
             show_repository_icons: true,
             show_sidebar_search: true,
             show_system_load: true,
+            show_window_controls: cfg!(target_os = "linux"),
             sidebar: font(monospace, 12.0),
             sidebar_layout: SidebarLayout::default(),
             sidebar_style: SidebarStyle::default(),
             smooth_scroll: true,
             sound: SoundConfig::default(),
             status_bar: StatusBar::default(),
-            status_icons: None,
+            status_icons: StatusIcons::default(),
+            tab_layout: TabLayoutMode::default(),
             // Tabs are terminal chrome, so they read in the monospace face the
             // sidebar and terminal use, as they do in the reference UI.
             tabs: font(monospace, 12.0),
@@ -485,6 +511,7 @@ struct Settings {
     accent: Accent,
     agent_checkpoints: Option<bool>,
     agents_placement: AgentsPlacement,
+    azure: AzureConfig,
     backdrop: Backdrop,
     bell: BellConfig,
     boat: BoatConfig,
@@ -498,6 +525,7 @@ struct Settings {
     contrast: Contrast,
     daytona: DaytonaConfig,
     devices: BTreeMap<String, DeviceSettings>,
+    edge_rail: Option<bool>,
     editor_command: Option<crate::editor::EditorCommand>,
     features: Features,
     focus_follows_mouse: Option<bool>,
@@ -511,6 +539,7 @@ struct Settings {
     option_as_alt: OptionAsAlt,
     palette: crate::palette::PaletteConfig,
     pane_keys: PaneKeys,
+    px0: crate::px0::Config,
     remove_merged_worktrees: Option<bool>,
     show_agents: Option<bool>,
     show_agents_header: Option<bool>,
@@ -520,11 +549,13 @@ struct Settings {
     show_repository_icons: Option<bool>,
     show_sidebar_search: Option<bool>,
     show_system_load: Option<bool>,
+    show_window_controls: Option<bool>,
     sidebar: sidebar_style::SidebarSettings,
     smooth_scroll: Option<bool>,
     sound: SoundConfig,
     status_bar: StatusBar,
-    status_icons: Option<StatusIcons>,
+    status_icons: Option<status_icons::SavedIcons>,
+    tab_layout: TabLayoutMode,
     tabs: FontSettings,
     terminal: FontSettings,
     theme: Option<String>,
@@ -856,6 +887,9 @@ impl Config {
         settings.github.client_id_with_override(None)?;
         settings.github.check_accounts()?;
         config.github = settings.github;
+        #[cfg(feature = "azure")]
+        settings.azure.check()?;
+        config.azure = settings.azure;
         #[cfg(feature = "boat")]
         settings.boat.settings_with(|_| None)?;
         config.boat = settings.boat;
@@ -923,10 +957,16 @@ impl Config {
         config.show_repository_icons = settings.show_repository_icons.unwrap_or(true);
         config.show_sidebar_search = settings.show_sidebar_search.unwrap_or(true);
         config.show_system_load = settings.show_system_load.unwrap_or(true);
+        config.show_window_controls = settings
+            .show_window_controls
+            .unwrap_or(cfg!(target_os = "linux"));
         config.smooth_scroll = settings.smooth_scroll.unwrap_or(true);
         // keep-sorted end
         config.status_bar = settings.status_bar;
-        config.status_icons = settings.status_icons;
+        config.tab_layout = settings.tab_layout;
+        let (status_icons, legacy_rail) = status_icons::SavedIcons::resolve(settings.status_icons);
+        config.status_icons = status_icons;
+        config.edge_rail = settings.edge_rail.unwrap_or(legacy_rail);
         config.zen = settings.zen.try_into()?;
         settings.backdrop.validate()?;
         config.backdrop = settings.backdrop;
@@ -937,6 +977,8 @@ impl Config {
         config.option_as_alt = settings.option_as_alt;
         config.open_links_in = settings.open_links_in;
         config.code = settings.code;
+        settings.px0.check()?;
+        config.px0 = settings.px0;
         config.open_files_in = settings.open_files_in;
         config.editor_command = settings.editor_command;
         config.keep_selection_after_copy = settings.keep_selection_after_copy.unwrap_or(true);

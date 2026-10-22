@@ -32,6 +32,8 @@ mod configured_rows;
 mod device_footer;
 #[cfg(test)]
 mod device_footer_setting;
+#[cfg(all(test, feature = "azure"))]
+mod device_removing;
 #[cfg(test)]
 mod devices_layout;
 #[cfg(test)]
@@ -49,14 +51,25 @@ mod layouts;
 #[cfg(test)]
 mod listening_ports;
 #[cfg(test)]
+mod local_counts_chip;
+#[cfg(test)]
 mod nested_agents;
+#[cfg(test)]
+mod other_device_prs;
 #[cfg(test)]
 mod palette;
 #[cfg(test)]
 mod palette_header;
 #[cfg(test)]
+mod pane_names;
+#[cfg(test)]
 mod picker_scroll;
 #[cfg(test)]
+mod plain_folder_icon;
+#[cfg(test)]
+mod probe_bar;
+#[cfg(test)]
+mod probe_scale;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
@@ -95,6 +108,8 @@ mod update_panel;
 mod workspace_click_hover;
 #[cfg(test)]
 mod workspace_menu;
+#[cfg(test)]
+mod workspace_menu_name;
 #[cfg(test)]
 mod worktree_note_trunk;
 #[cfg(test)]
@@ -313,38 +328,68 @@ impl ProbeText {
             && super::sidebar_width(None, f32::from(window.viewport_size().width))
                 == super::SIDEBAR_WIDTH
         {
-            let mode = window
+            // The activity bar, when shown, puts the sidebar beside it.
+            let (mode, bar) = window
                 .root::<HerdrWindow>()
                 .flatten()
-                .map(|view| view.read(cx).config.layout.mode)
+                .map(|view| {
+                    let view = view.read(cx);
+                    let bar = if view.activity_bar_shown() {
+                        super::activity::BAR_WIDTH
+                    } else {
+                        0.
+                    };
+                    (view.config.layout.mode, bar)
+                })
                 .unwrap_or_default();
-            probe.verify_child(&self.0, mode)?;
+            probe.verify_child(&self.0, mode, bar, window.scale_factor())?;
             eprintln!("SIDEBAR child verified: {}", probe.glyph_text);
         }
         Ok(probe)
     }
 }
 
+/// Whether a painted edge or width is within one device pixel of its logical
+/// value. Layout snaps edges to device pixels (`scale` per logical pixel), so
+/// at a fractional scale such as Windows' default 150% a column may land a
+/// fraction of a logical pixel from where it was laid out.
+pub(crate) fn within_device_pixel(actual: Pixels, expected: Pixels, scale: f32) -> bool {
+    (actual - expected).abs() < px(1. / scale.max(1.))
+}
+
 impl PaintedText {
-    fn verify_child(&self, input: &str, mode: crate::config::LayoutMode) -> Result<()> {
+    /// `bar` is the width of the activity bar left of the sidebar, if any;
+    /// `scale` is the window's device pixels per logical pixel; see
+    /// [`within_device_pixel`].
+    fn verify_child(
+        &self,
+        input: &str,
+        mode: crate::config::LayoutMode,
+        bar: f32,
+        scale: f32,
+    ) -> Result<()> {
+        let near = |actual, expected| within_device_pixel(actual, expected, scale);
         let look = super::layout::for_mode(mode);
         let layout = look.density;
         // Menu labels share text keys, and retained paint probes can still
         // describe the previous layout. Compute the sidebar column directly.
+        // The child row draws no fold chevron, so its label also takes the
+        // chevron's column.
         let left =
-            px(look.content_x() + layout.child_indent() + super::STATUS_WIDTH + layout.gap());
+            px(bar + look.content_x() + layout.child_indent() + super::STATUS_WIDTH + layout.gap());
+        // A worktree group's member draws no chevron, so its name also
+        // takes the arrow column.
         let width = px(look.content_width(super::SIDEBAR_WIDTH)
             - super::STATUS_WIDTH
             - layout.gap()
-            - layout.child_indent()
-            - super::ARROW_RESERVE);
+            - layout.child_indent());
         ensure!(
-            self.bounds.left() == left,
+            near(self.bounds.left(), left),
             "child label left: actual {:?}, expected {left:?}",
             self.bounds.left()
         );
         ensure!(
-            self.bounds.size.width == width,
+            near(self.bounds.size.width, width),
             "child label width: actual {:?}, expected {width:?}",
             self.bounds.size.width
         );
@@ -374,8 +419,12 @@ impl PaintedText {
                 "long child label did not truncate correctly: {:?}",
                 self.glyph_text
             );
+            // GPUI keeps the longest prefix that fits beside the ellipsis
+            // and drops the glyph that would not, so a correct truncation
+            // can fall one glyph plus the ellipsis short. Segoe UI on Windows
+            // leaves 13px where macOS's system font left under 12.
             ensure!(
-                self.width > self.bounds.size.width - px(12.),
+                self.width > self.bounds.size.width - px(16.),
                 "child glyph width {:?} did not fill label width {:?}",
                 self.width,
                 self.bounds.size.width
@@ -416,7 +465,9 @@ pub(crate) fn snapshot(workspace_count: usize) -> ClientShellSnapshot {
         })).collect::<Vec<_>>(),
         "panes": [], "commands": [],
         "workspaces": (0..workspace_count).map(|i| serde_json::json!({
-            "workspace_id": format!("w{i}"), "active_tab_id": "t0", "new_workspace_cwd": "/tmp",
+            "workspace_id": format!("w{i}"), "active_tab_id": "t0",
+            // The main checkout's shell stands in its repository, as Herdr opens it.
+            "new_workspace_cwd": if i == 3 { REPO_KEY.trim_end_matches("/.git") } else { "/tmp" },
             "number": i + 1,
             "label": match i { 0 => "herdr", 1 => "herdr-gpui-sidebar-rendering-regression-investigation", 3..=5 => "agent-launcher", _ => "another workspace" },
             "custom_label": false,
@@ -466,7 +517,28 @@ pub(crate) fn full_draw(window: &mut Window, cx: &mut App) -> ArenaClearNeeded {
 
 #[cfg(test)]
 pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>) -> HerdrWindow {
+    let sidebar_view = {
+        let weak = cx.weak_entity();
+        cx.new(|_| {
+            crate::sidebar::SidebarView::new(
+                weak,
+                super::agents::Indicators::new(
+                    None,
+                    crate::config::StatusIcons::default(),
+                    false,
+                    false,
+                    &crate::config::Theme::default(),
+                ),
+            )
+        })
+    };
+    let hosts = vec![cx.entity_id(), sidebar_view.entity_id()];
+    let mark_layer = cx.new(|cx| crate::mark_layer::MarkLayer::new(window, hosts, cx));
+    let focus = cx.focus_handle();
+    let terminal_focus = HerdrWindow::leave_region_with_terminal(&focus, window, cx);
     HerdrWindow {
+        _terminal_focus: terminal_focus,
+        chrome_region: None,
         sound: Default::default(),
         bell: Default::default(),
         updater: crate::updater::Updater::default(),
@@ -476,6 +548,8 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         app_update_notes_scroll: gpui::ScrollHandle::new(),
         removal: None,
         merged_cleanup: Default::default(),
+        #[cfg(feature = "integration-test")]
+        navigations: Default::default(),
         worktree_script: None,
         wsl_paste: None,
         editor_open: None,
@@ -503,6 +577,15 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
                 mode: crate::config::LayoutMode::from(crate::config::Density::Comfortable),
                 ..Default::default()
             },
+            // The plain sidebar, at the window's edge; the activity bar's
+            // tests turn the bar on.
+            sidebar_style: crate::config::SidebarStyle {
+                activity_bar: false,
+                ..Default::default()
+            },
+            // Disable window controls so the menu bar's movable handler doesn't
+            // consume mouse events that tests expect to bubble.
+            show_window_controls: false,
             ..Default::default()
         },
         theme: Default::default(),
@@ -514,15 +597,17 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         deliveries: Default::default(),
         terminal_notes: Default::default(),
         notes_width: crate::panel_resize::NOTES,
+        notice_overflow: Default::default(),
         review_files_width: crate::panel_resize::REVIEW_FILES,
         reviews: Default::default(),
         code_views: Default::default(),
         code_indexes: Default::default(),
         orchestrators: Default::default(),
         orchestrator_live: Default::default(),
-        detached_orchestrators: Default::default(),
+        next_orchestrator: 0,
         orchestrator_events: Vec::new(),
         orchestrator_sampling: false,
+        overview: Default::default(),
         viewport_width: 0.,
         pr_actions: Default::default(),
         usage: Default::default(),
@@ -569,13 +654,14 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
             live.snapshot = Some(Arc::new(snapshot(40)));
             live
         },
-        focus: cx.focus_handle(),
+        focus,
         options: ConnectOptions::default(),
         last_queued_options: None,
         pending_resize: None,
         last_input: None,
         last_pointer: None,
         active: false,
+        activity: Default::default(),
         sent_focus: None,
         bounds: Bounds::default(),
         title: crate::WINDOW_TITLE.to_owned(),
@@ -585,6 +671,8 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         links: Default::default(),
         terminal_mouse: None,
         scrollbar_drag: None,
+        security: Default::default(),
+        security_search: crate::security::SecuritySearch::new(cx),
         split_drag: None,
         split_cursor: None,
         pending_images: Vec::new(),
@@ -603,6 +691,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         backdrop: Default::default(),
         device_themes: Default::default(),
         regions: Vec::new(),
+        mark_layer,
         marked: String::new(),
         marked_selection: None,
         hover: None,
@@ -643,20 +732,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
             this.apply_shared_theme(cx);
             cx.notify();
         }),
-        sidebar_view: {
-            let weak = cx.weak_entity();
-            cx.new(|_| {
-                crate::sidebar::SidebarView::new(
-                    weak,
-                    super::agents::Indicators::new(
-                        None,
-                        None,
-                        false,
-                        &crate::config::Theme::default(),
-                    ),
-                )
-            })
-        },
+        sidebar_view,
         surface_signal: cx.new(|_| crate::window::SurfaceSignal),
         _sidebar_invalidation: HerdrWindow::invalidate_sidebar(cx),
         _host_theme: HerdrWindow::observe_host_theme(cx),

@@ -7,6 +7,7 @@ mod events;
 mod help;
 mod hosts;
 mod local;
+mod open;
 mod settings;
 mod tabs;
 mod work;
@@ -51,6 +52,9 @@ pub(crate) struct Output {
     /// Output whose bytes matter, such as a patch: written unchanged into a
     /// pipe or file, and shown from `text` on a terminal.
     bytes: Option<Vec<u8>>,
+    /// Text for standard error besides, such as a remote command's, which
+    /// `--json` carries in `json` instead.
+    stderr: String,
 }
 
 impl Output {
@@ -62,6 +66,7 @@ impl Output {
             text,
             status: 0,
             bytes: None,
+            stderr: String::new(),
         }
     }
 
@@ -72,6 +77,7 @@ impl Output {
             json: serde_json::to_value(data)?,
             status: 0,
             bytes: None,
+            stderr: String::new(),
         })
     }
 
@@ -82,12 +88,26 @@ impl Output {
             json: serde_json::to_value(data)?,
             status: 0,
             bytes: Some(bytes),
+            stderr: String::new(),
         })
     }
 
     /// Done, but with nothing to report: exits [`exit::NOTHING`].
     pub(crate) fn nothing(mut self) -> Self {
         self.status = exit::NOTHING;
+        self
+    }
+
+    /// An answer that reports a failure, such as a batch where a device
+    /// failed: printed in full, exiting [`exit::REFUSED`].
+    pub(crate) fn failed(mut self) -> Self {
+        self.status = exit::REFUSED;
+        self
+    }
+
+    /// Also print `text` on standard error, unless `--json` asked.
+    pub(crate) fn with_stderr(mut self, text: impl Into<String>) -> Self {
+        self.stderr = text.into();
         self
     }
 }
@@ -179,16 +199,37 @@ fn send(request: &Request) -> crate::Result<Response> {
 /// Hands a `herdr-gpui://` link to the running app; what it did, for a
 /// person. [`crate::Error::ControlUnavailable`] means no app is running.
 pub(crate) fn send_link(link: &crate::link::Link) -> crate::Result<String> {
+    hand_off(&Request::Link(Call {
+        caller: Caller::default(),
+        op: super::protocol::LinkOp { url: link.to_url() },
+    }))
+}
+
+/// Brings the running app's window forward, for a plain launch while it
+/// runs; what it did, for a person. [`crate::Error::ControlUnavailable`]
+/// means no app is running.
+#[cfg(windows)]
+pub(crate) fn send_focus() -> crate::Result<String> {
+    hand_off(&focus_request())
+}
+
+/// `app focus` for no workspace in particular: the frontmost window.
+#[cfg(any(windows, test))]
+fn focus_request() -> Request {
+    Request::App(Call {
+        caller: Caller::default(),
+        op: super::protocol::app::AppOp::Focus,
+    })
+}
+
+/// Sends what a launch hands to the running app instead of starting it.
+fn hand_off(request: &Request) -> crate::Result<String> {
     // The shell lets the process it started for a click take the
     // foreground; this passes that on to the app, so its window comes
     // forward instead of flashing in the taskbar.
     #[cfg(windows)]
     allow_foreground();
-    let request = Request::Link(Call {
-        caller: Caller::default(),
-        op: super::protocol::LinkOp { url: link.to_url() },
-    });
-    match send(&request)? {
+    match send(request)? {
         Response::Done { message } => Ok(message),
         response => Err(rejected(response)),
     }
@@ -302,33 +343,15 @@ fn finish(result: crate::Result<Output>, json: bool) -> ExitCode {
             println!("{}", output.json);
             ExitCode::from(output.status)
         }
-        Ok(Output {
-            bytes: Some(bytes),
-            status,
-            ..
-        }) if !std::io::stdout().is_terminal() => {
-            let mut stdout = std::io::stdout().lock();
-            if let Err(error) = stdout.write_all(&bytes).and_then(|()| stdout.flush()) {
-                eprintln!("{error}");
-                return ExitCode::from(exit::REFUSED);
+        Ok(output) => {
+            let status = print(&output);
+            if !output.stderr.is_empty() {
+                eprint!(
+                    "{}",
+                    for_terminal(&output.stderr, std::io::stderr().is_terminal())
+                );
             }
             ExitCode::from(status)
-        }
-        Ok(output) => {
-            if !output.text.is_empty() {
-                if output.status == exit::NOTHING {
-                    eprintln!(
-                        "{}",
-                        for_terminal(&output.text, std::io::stderr().is_terminal())
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        for_terminal(&output.text, std::io::stdout().is_terminal())
-                    );
-                }
-            }
-            ExitCode::from(output.status)
         }
         Err(error) => {
             let message = crate::notifications::safe_text(&error.to_string(), 4096);
@@ -343,6 +366,34 @@ fn finish(result: crate::Result<Output>, json: bool) -> ExitCode {
             ExitCode::from(status(&error))
         }
     }
+}
+
+/// Prints successful output as text; the exit status.
+fn print(output: &Output) -> u8 {
+    if let Some(bytes) = &output.bytes
+        && !std::io::stdout().is_terminal()
+    {
+        let mut stdout = std::io::stdout().lock();
+        if let Err(error) = stdout.write_all(bytes).and_then(|()| stdout.flush()) {
+            eprintln!("{error}");
+            return exit::REFUSED;
+        }
+        return output.status;
+    }
+    if !output.text.is_empty() {
+        if output.status == exit::NOTHING {
+            eprintln!(
+                "{}",
+                for_terminal(&output.text, std::io::stderr().is_terminal())
+            );
+        } else {
+            println!(
+                "{}",
+                for_terminal(&output.text, std::io::stdout().is_terminal())
+            );
+        }
+    }
+    output.status
 }
 
 /// Runs a control command without starting GPUI.
@@ -374,6 +425,7 @@ pub(crate) fn run(invocation: Invocation) -> ExitCode {
         ControlCommand::Browser(command) => browser::run(command, &context),
         ControlCommand::Status => app::status(&context),
         ControlCommand::App(command) => app::app(command, &context),
+        ControlCommand::Open { path } => open::open(&path, &context),
         ControlCommand::Window(command) => app::window(command, &context),
         ControlCommand::Ui(command) => app::ui(command, &context),
         ControlCommand::Run { name } => app::run_command(&name, &context),
@@ -383,6 +435,7 @@ pub(crate) fn run(invocation: Invocation) -> ExitCode {
         ControlCommand::Devices => tabs::devices(&context),
         ControlCommand::Orchestrator(command) => tabs::orchestrator(command, &context),
         ControlCommand::Review => tabs::review(&context),
+        ControlCommand::Px0 => tabs::px0(&context),
         ControlCommand::Notes(command) => work::notes(command, &context),
         ControlCommand::Feedback { wait } => browser::feedback(wait, &context),
         ControlCommand::Checkpoint(command) => work::checkpoint(command, &context),
@@ -398,6 +451,7 @@ pub(crate) fn run(invocation: Invocation) -> ExitCode {
         ControlCommand::Processes { pane } => local::processes(pane.as_deref()),
         ControlCommand::Usage => hosts::usage(&context),
         ControlCommand::System => hosts::system(&context),
+        ControlCommand::Security(command) => hosts::security(command, &context),
         ControlCommand::Search {
             files,
             query,

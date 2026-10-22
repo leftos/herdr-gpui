@@ -9,6 +9,7 @@ pub(super) mod plugins;
 pub(super) use fonts::native_probe;
 pub(super) use fonts::{face_font, family_label};
 pub(super) mod preferences;
+pub(super) mod px0;
 
 use super::{Section, SettingsWindow};
 use crate::{
@@ -182,6 +183,7 @@ impl SettingsWindow {
         self.plugins
             .refresh_appearance(&self.config, &self.theme, cx);
         self.refresh_code_appearance(cx);
+        self.sync_px0_field(cx);
         if let Some(edit) = &self.number_edit {
             edit.input.update(cx, |input, cx| {
                 input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
@@ -241,8 +243,9 @@ impl SettingsWindow {
         selected: bool,
         enabled: bool,
     ) -> Stateful<Div> {
-        div()
-            .id(id.into())
+        // A choice is a button or one of several options, and its label may
+        // be any element, so its role and name are the caller's to set.
+        crate::accessibility::disabled(div().id(id.into()), !enabled)
             .px(px(14.))
             .py(px(10.))
             .min_w_0()
@@ -278,6 +281,7 @@ impl SettingsWindow {
             Section::Fonts => self.render_fonts(cx),
             Section::StatusBar => self.render_status_bar(cx),
             Section::Sidebar => self.render_sidebar(cx),
+            Section::Indicators => self.render_indicators(cx),
             Section::General => self.render_general(cx),
             Section::Tabs => self.render_tabs(cx),
             Section::Notifications => self.render_notifications(cx),

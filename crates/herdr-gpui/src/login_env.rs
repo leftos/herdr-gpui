@@ -30,6 +30,34 @@ pub(crate) fn path() -> Option<OsString> {
     std::env::var_os("PATH")
 }
 
+/// The variable `name` as [`apply`] gives it to a command: the login
+/// shell's value when it sets one, else this process's. Blocking the first
+/// time on Unix, like [`apply`]: run it off the UI thread.
+pub(crate) fn var(name: &str) -> Option<OsString> {
+    #[cfg(unix)]
+    if let Some((_, value)) = unix::resolve().and_then(|environment| {
+        environment
+            .iter()
+            .find(|(key, _)| key.as_os_str() == std::ffi::OsStr::new(name))
+    }) {
+        return Some(value.clone());
+    }
+    std::env::var_os(name)
+}
+
+/// What the login shell at `shell` exports, probed as [`apply`] probes the
+/// user's, for tests elsewhere that start from a desktop launch's bare
+/// environment.
+#[cfg(all(test, unix))]
+pub(crate) fn probe_for_tests(shell: &std::path::Path) -> Option<Vec<(OsString, OsString)>> {
+    unix::probe(
+        shell.as_os_str(),
+        false,
+        false,
+        std::time::Duration::from_secs(5),
+    )
+}
+
 /// Adopts the login shell's `XDG_CONFIG_HOME` for a launch without one, such
 /// as from Finder or a desktop launcher, so the daemon a shell started, and
 /// the settings beside it, are found where the shell keeps them. Probing the
@@ -119,7 +147,12 @@ mod unix {
             .map(|(_, value)| value.clone())
     }
 
-    fn probe(shell: &OsStr, tty: bool, term: bool, timeout: Duration) -> Option<Environment> {
+    pub(super) fn probe(
+        shell: &OsStr,
+        tty: bool,
+        term: bool,
+        timeout: Duration,
+    ) -> Option<Environment> {
         if tty || term {
             return None;
         }
@@ -427,8 +460,10 @@ mod unix {
             let (dir, path) =
                 shell("/bin/sleep 60 &\nprintf '%s %s' \"$$\" \"$!\" > \"$0.pids\"\nwait");
             let start = Instant::now();
-            assert!(probe(path.as_os_str(), false, false, Duration::from_secs(1)).is_none());
-            assert!(start.elapsed() < Duration::from_secs(5));
+            // Room for a loaded machine to start the shell and record its pids
+            // before the timeout fires; the sleep outlasts it either way.
+            assert!(probe(path.as_os_str(), false, false, Duration::from_secs(3)).is_none());
+            assert!(start.elapsed() < Duration::from_secs(10));
             let pids = std::fs::read_to_string(dir.path().join("shell.pids")).unwrap();
             for pid in pids.split_whitespace() {
                 let deadline = Instant::now() + Duration::from_secs(2);

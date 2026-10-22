@@ -9,7 +9,6 @@ use super::{
     look::{GREEN, MAGENTA, RED, YELLOW},
 };
 use crate::{
-    config::corners,
     orchestrator::Item,
     pr_actions,
     pull_request::{MergeMethod, Outcome, PullRequest, State},
@@ -19,7 +18,7 @@ use gpui::{prelude::*, *};
 impl OrchestratorView {
     /// The token that reads the followed pull request's repository.
     fn pr_token(&self) -> Option<std::sync::Arc<secrecy::SecretString>> {
-        let tokens = self.request.token.as_ref()?;
+        let tokens = self.request()?.token.as_ref()?;
         Some(match self.pr.target() {
             Some(target) => tokens.for_owner(&target.owner).clone(),
             None => tokens.main().clone(),
@@ -33,7 +32,7 @@ impl OrchestratorView {
             .pull_request
             .as_ref()?
             .number;
-        let lookup = self.snapshot.pull_request.as_ref()?;
+        let lookup = self.snapshot().pull_request.as_ref()?;
         if lookup.number != number {
             return None;
         }
@@ -137,7 +136,7 @@ impl OrchestratorView {
             .gap_1();
         let Some(pr) = self.open_pull_request() else {
             let text = match self.lookup_problem(item) {
-                _ if self.request.token.is_none() => {
+                _ if self.request().is_none_or(|request| request.token.is_none()) => {
                     "Sign in to GitHub to read the checks.".to_owned()
                 }
                 Some(problem) => problem,
@@ -179,7 +178,7 @@ impl OrchestratorView {
     /// Why `item`'s pull request lookup came back without one: its error,
     /// or GitHub knowing no such pull request. `None` while it is read.
     pub(super) fn lookup_problem(&self, item: &Item) -> Option<String> {
-        let lookup = self.snapshot.pull_request.as_ref()?;
+        let lookup = self.snapshot().pull_request.as_ref()?;
         if Some(lookup.number) != item.pull_request.as_ref().map(|pr| pr.number) {
             return None;
         }
@@ -190,57 +189,37 @@ impl OrchestratorView {
         }
     }
 
-    /// The merge methods GitHub allows here, as a small menu under the button.
-    pub(super) fn render_merge_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The merge methods GitHub allows here, in a row under Merge once it
+    /// is open.
+    pub(super) fn render_merge_methods(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.merge_open {
             return None;
         }
         let pr = self.open_pull_request()?;
         let look = &self.look;
-        let theme = &look.theme;
         Some(
-            deferred(
-                div()
-                    .absolute()
-                    .top(px(96.))
-                    .right(px(16.))
-                    .w(px(220.))
-                    .p_1()
-                    .flex()
-                    .flex_col()
-                    .rounded(px(corners::CONTROL))
-                    .bg(rgb(theme.surface))
-                    .border_1()
-                    .border_color(rgb(theme.active))
-                    .shadow_lg()
-                    .children(pr.merge_methods.iter().copied().map(|method| {
-                        let hover = theme.active;
-                        div()
-                            .id(SharedString::from(format!(
-                                "orchestrator-merge-{}",
-                                method.graphql()
-                            )))
-                            .px_2()
-                            .h(px(28.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(corners::SMALL))
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .child(method.action())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.merge_open = false;
-                                // The confirmation names what the menu showed.
-                                if let Some(target) = this.pr.target().cloned() {
-                                    this.ask(Confirm::Merge { method, target }, cx);
-                                }
-                            }))
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_2()
+                .children(pr.merge_methods.iter().copied().map(|method| {
+                    look.button(
+                        SharedString::from(format!("orchestrator-merge-{}", method.graphql())),
+                        method.action(),
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.merge_open = false;
+                        // The confirmation names what the row showed.
+                        if let Some(target) = this.pr.target().cloned() {
+                            this.ask(Confirm::Merge { method, target }, cx);
+                        }
                     }))
-                    .when(pr.merge_methods.is_empty(), |el| {
-                        el.child(look.muted("This repository allows no merge method."))
-                    }),
-            )
-            .into_any_element(),
+                }))
+                .when(pr.merge_methods.is_empty(), |el| {
+                    el.child(look.muted("This repository allows no merge method."))
+                }),
         )
     }
 

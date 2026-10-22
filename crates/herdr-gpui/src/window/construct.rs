@@ -34,13 +34,20 @@ impl HerdrWindow {
         // Created by the first window; each later one shares its PR answers.
         cx.default_global::<crate::pull_request::Shared>();
         let weak = cx.weak_entity();
-        let (initial_theme, initial_icons) = cx
+        let (initial_theme, initial_icons, initial_rail) = cx
             .try_global::<crate::app::InitialAppearance>()
-            .map(|appearance| (appearance.theme.clone(), appearance.config.status_icons))
+            .map(|appearance| {
+                (
+                    appearance.theme.clone(),
+                    appearance.config.status_icons,
+                    appearance.config.edge_rail,
+                )
+            })
             .unwrap_or_default();
         let indicators = sidebar::Indicators::new(
             None,
             initial_icons,
+            initial_rail,
             matches!(
                 cx.window_appearance(),
                 WindowAppearance::Light | WindowAppearance::VibrantLight
@@ -48,6 +55,8 @@ impl HerdrWindow {
             &initial_theme,
         );
         let sidebar_view = cx.new(|_| sidebar::SidebarView::new(weak, indicators));
+        let hosts = vec![cx.entity_id(), sidebar_view.entity_id()];
+        let mark_layer = cx.new(|cx| crate::mark_layer::MarkLayer::new(window, hosts, cx));
         let timer = cx.background_executor().clone();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -79,6 +88,7 @@ impl HerdrWindow {
         // Starts the thread that reads and saves the marks file.
         let teleport_marks = crate::teleport::Marks::start();
         let sidebar_search = sidebar::SidebarSearch::new(cx);
+        let security_search = crate::security::SecuritySearch::new(cx);
         let surface_signal = cx.new(|_| SurfaceSignal);
         let sidebar_invalidation = Self::invalidate_sidebar(cx);
         let host_theme = Self::observe_host_theme(cx);
@@ -111,6 +121,7 @@ impl HerdrWindow {
             cx.notify();
         });
         let window_closed = Self::give_back_torn_tabs(cx);
+        let terminal_focus = Self::leave_region_with_terminal(&focus, window, cx);
         let mut this = Self {
             // keep-sorted start
             _activation: activation,
@@ -120,10 +131,12 @@ impl HerdrWindow {
             _poll: poll,
             _prefix_interceptor: prefix_interceptor,
             _sidebar_invalidation: sidebar_invalidation,
+            _terminal_focus: terminal_focus,
             _window_closed: window_closed,
             _worktree_notes: worktree_notes,
             activation_deadline: None,
             active: window.is_window_active(),
+            activity: Default::default(),
             agent_sort: preferences::AgentSort::default(),
             agent_sort_modified: false,
             app_update_notes: Default::default(),
@@ -137,6 +150,7 @@ impl HerdrWindow {
             catalog,
             cell_width: 9.,
             checkpoints: Default::default(),
+            chrome_region: None,
             #[cfg(feature = "cloud")]
             cloud_jobs: Default::default(),
             #[cfg(feature = "cloud")]
@@ -152,7 +166,6 @@ impl HerdrWindow {
             copy_mode: None,
             daemon_text: Default::default(),
             deliveries: Default::default(),
-            detached_orchestrators: Default::default(),
             device_drag: None,
             device_filter: None,
             device_order: Vec::new(),
@@ -194,17 +207,23 @@ impl HerdrWindow {
             listening_ports: Default::default(),
             live: LiveState::default(),
             local_error: error,
+            mark_layer,
             marked: String::new(),
             marked_selection: None,
             menu,
             merged_cleanup: Default::default(),
+            #[cfg(feature = "integration-test")]
+            navigations: Default::default(),
             network_quality_seen: 0,
+            next_orchestrator: 0,
             notes_width: crate::panel_resize::NOTES,
+            notice_overflow: Default::default(),
             options: ConnectOptions::default(),
             orchestrator_events: Vec::new(),
             orchestrator_live: Default::default(),
             orchestrator_sampling: false,
             orchestrators: Default::default(),
+            overview: Default::default(),
             painter: Default::default(),
             pane_carry: None,
             pending_images: Vec::new(),
@@ -225,6 +244,8 @@ impl HerdrWindow {
             review_files_width: crate::panel_resize::REVIEW_FILES,
             reviews: Default::default(),
             scrollbar_drag: None,
+            security: Default::default(),
+            security_search,
             selected_endpoint: 0,
             selected_generation: 0,
             selection: None,
@@ -291,7 +312,6 @@ impl HerdrWindow {
             async {}
         })
         .detach();
-        Self::close_orchestrator_windows_on_release(cx);
         #[cfg(feature = "integration-test")]
         if sidebar_test {
             this._poll = Task::ready(());

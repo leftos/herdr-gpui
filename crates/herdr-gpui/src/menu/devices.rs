@@ -11,6 +11,7 @@ mod host_key;
 mod host_menu;
 mod local_network;
 pub(super) mod rail;
+mod saved_warning;
 mod setup;
 mod wsl;
 
@@ -43,15 +44,14 @@ fn device_list_height(anchor_y: Pixels) -> Pixels {
 }
 
 fn room_above(anchor_y: Pixels) -> Pixels {
-    let chrome = crate::titlebar::HEIGHT
-        + crate::worktree_banner::reserved(env!("HERDR_BUILD_WORKTREE") == "1");
+    let chrome = crate::titlebar::HEIGHT;
     anchor_y - px(chrome + MENU_GAP + super::MENU_MARGIN + 12.)
 }
 
-struct SettingsHint {
-    text: SharedString,
-    foreground: u32,
-    surface: u32,
+pub(crate) struct SettingsHint {
+    pub(crate) text: SharedString,
+    pub(crate) foreground: u32,
+    pub(crate) surface: u32,
 }
 
 impl Render for SettingsHint {
@@ -78,7 +78,12 @@ impl HerdrWindow {
     #[cfg(feature = "cloud")]
     // Providers that need no setting never read the environment.
     #[cfg_attr(
-        not(any(feature = "boat", feature = "coder", feature = "daytona")),
+        not(any(
+            feature = "azure",
+            feature = "boat",
+            feature = "coder",
+            feature = "daytona"
+        )),
         allow(unused_variables)
     )]
     fn cloud_providers_with_env(
@@ -92,6 +97,8 @@ impl HerdrWindow {
             .iter()
             .copied()
             .filter(|provider| match provider {
+                #[cfg(feature = "azure")]
+                crate::cloud::CloudProvider::Azure => self.config.azure.configured(&var),
                 #[cfg(feature = "boat")]
                 crate::cloud::CloudProvider::Boat => {
                     self.config.boat.api_url.is_some() || var("HERDR_BOAT_API_URL").is_some()
@@ -221,6 +228,16 @@ impl HerdrWindow {
         let connected = self.endpoints.iter().any(|endpoint| {
             self.device_visible(&endpoint.id) && endpoint.live.status.is_connected()
         });
+        // Beside the activity bar, which carries Settings, the picker leads
+        // with the device's initials and says how many hosts there are.
+        let bar = self.activity_bar_shown();
+        let hosts = self.endpoints.len();
+        let initials: String = label
+            .split_whitespace()
+            .filter_map(|word| word.chars().next())
+            .take(2)
+            .flat_map(char::to_uppercase)
+            .collect();
         div()
             .id("device-footer")
             .debug_selector(|| "device-footer".into())
@@ -235,6 +252,18 @@ impl HerdrWindow {
             .child(
                 div()
                     .id("device-picker")
+                    .role(Role::Button)
+                    .aria_label(format!(
+                        "Devices: {label}, {}",
+                        if connected {
+                            "connected"
+                        } else {
+                            "disconnected"
+                        }
+                    ))
+                    .map(|picker| {
+                        self.chrome_stop(crate::window::chrome_focus::Region::Sidebar, picker)
+                    })
                     .relative()
                     .debug_selector(|| "device-picker".into())
                     .flex_1()
@@ -250,12 +279,30 @@ impl HerdrWindow {
                         div()
                             .relative()
                             .flex_none()
-                            .child(
-                                svg()
-                                    .path("icons/devices.svg")
-                                    .size(px(16.))
-                                    .text_color(rgb(self.theme.foreground)),
-                            )
+                            .map(|icon| {
+                                if bar {
+                                    icon.child(
+                                        div()
+                                            .debug_selector(|| "device-footer-initials".into())
+                                            .size(px(22.))
+                                            .rounded_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .bg(rgb(self.theme.active))
+                                            .text_size(px(10.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(initials),
+                                    )
+                                } else {
+                                    icon.child(
+                                        svg()
+                                            .path("icons/devices.svg")
+                                            .size(px(16.))
+                                            .text_color(rgb(self.theme.foreground)),
+                                    )
+                                }
+                            })
                             // How many Coder workspaces are still being added,
                             // on the icon's corner so the label keeps its room.
                             .when(self.cloud_jobs_pending() > 0, |icon| {
@@ -280,6 +327,15 @@ impl HerdrWindow {
                             }),
                     )
                     .child(div().flex_1().min_w_0().truncate().child(label.to_owned()))
+                    .when(bar && hosts > 1, |picker| {
+                        picker.child(
+                            div()
+                                .flex_none()
+                                .text_size(px(11.))
+                                .text_color(rgb(self.theme.muted))
+                                .child(format!("{hosts} hosts")),
+                        )
+                    })
                     .child(
                         div()
                             .size(px(6.))
@@ -322,6 +378,11 @@ impl HerdrWindow {
             .child(
                 div()
                     .id("device-sessions")
+                    .role(Role::Button)
+                    .aria_label("Sessions")
+                    .map(|button| {
+                        self.chrome_stop(crate::window::chrome_focus::Region::Sidebar, button)
+                    })
                     .relative()
                     .debug_selector(|| "device-sessions".into())
                     .size(px(28.))
@@ -361,36 +422,38 @@ impl HerdrWindow {
                         this.open_sessions(this.sessions_anchor.get(), window, cx);
                     })),
             )
-            .child(
-                div()
-                    .id("device-settings")
-                    .debug_selector(|| "device-settings".into())
-                    .size(px(28.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(crate::config::corners::CONTROL))
-                    .cursor_pointer()
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| SettingsHint {
-                            text: hint.clone(),
-                            foreground,
-                            surface,
+            .when(!bar, |footer| {
+                footer.child(
+                    div()
+                        .id("device-settings")
+                        .debug_selector(|| "device-settings".into())
+                        .size(px(28.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(crate::config::corners::CONTROL))
+                        .cursor_pointer()
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| SettingsHint {
+                                text: hint.clone(),
+                                foreground,
+                                surface,
+                            })
+                            .into()
                         })
-                        .into()
-                    })
-                    .hover(|s| s.bg(rgb(self.theme.active)))
-                    .child(
-                        svg()
-                            .path("icons/settings.svg")
-                            .size(px(18.))
-                            .text_color(rgb(self.theme.foreground)),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.command(Command::Settings, window, cx);
-                    })),
-            )
+                        .hover(|s| s.bg(rgb(self.theme.active)))
+                        .child(
+                            svg()
+                                .path("icons/settings.svg")
+                                .size(px(18.))
+                                .text_color(rgb(self.theme.foreground)),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.command(Command::Settings, window, cx);
+                        })),
+                )
+            })
     }
 
     pub(super) fn render_devices(&self, cx: &mut Context<Self>) -> impl IntoElement {

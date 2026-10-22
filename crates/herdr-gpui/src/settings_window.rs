@@ -8,6 +8,8 @@ mod cloud_devices;
 pub(crate) use cloud_devices::open as open_cloud;
 mod controls;
 mod inputs;
+#[cfg(windows)]
+mod launch_at_login;
 mod layouts;
 mod navigation;
 mod pages;
@@ -71,6 +73,8 @@ pub(crate) fn open(source: WeakEntity<HerdrWindow>, cx: &mut App) {
         open_with(source, cx, |view, window, cx| {
             view.initialize_theme_browser(window, cx);
             view.initialize_controls(cx);
+            #[cfg(windows)]
+            view.refresh_launch_at_login(None, cx);
             view.reload(cx);
             view.watch_config(cx);
         })
@@ -119,6 +123,8 @@ fn open_with(
             });
             model.update(cx, |view, cx| {
                 view.retarget_source(source, cx);
+                #[cfg(windows)]
+                view.watch_launch_at_login(window, cx);
                 view._appearance = Some(cx.observe_window_appearance(window, |view, _, cx| {
                     view.apply_window_appearance(cx);
                 }));
@@ -157,6 +163,7 @@ struct SettingsWindow {
     controls: controls::Controls,
     plugins: controls::plugins::Plugins,
     code: controls::code::CodeSettings,
+    px0: controls::px0::Px0Settings,
     /// The open override dropdown, if any; its list renders inside its button.
     dropdown: Option<ui::Dropdown>,
     /// The number field being typed into, if any.
@@ -166,6 +173,8 @@ struct SettingsWindow {
     number_preview: Option<inputs::NumberPreview>,
     /// The host colour being typed as hex, if any.
     hex_edit: Option<sidebar::HexEdit>,
+    #[cfg(windows)]
+    launch_at_login: launch_at_login::LaunchAtLogin,
     error: Option<String>,
     status: Option<String>,
     focus: FocusHandle,
@@ -216,6 +225,16 @@ struct SettingsWindow {
     /// The main window's finished cloud jobs when the cards last read them.
     #[cfg(feature = "cloud")]
     cloud_jobs_seen: u64,
+    /// The cloud jobs' revision last drawn, so a job's progress redraws
+    /// Cloud devices without every change to the main window doing so.
+    #[cfg(feature = "cloud")]
+    cloud_jobs_drawn: u64,
+    /// The main window's cloud devices when the cards last read them, so a
+    /// device removed from the sidebar leaves Settings too.
+    #[cfg(feature = "cloud")]
+    cloud_devices_seen: u64,
+    #[cfg(feature = "azure")]
+    azure_card: Option<cloud_devices::AzureCard>,
     #[cfg(feature = "boat")]
     boat_card: Option<cloud_devices::BoatCard>,
     #[cfg(feature = "coder")]
@@ -296,10 +315,13 @@ impl SettingsWindow {
             controls: controls::Controls::new(cx),
             plugins: controls::plugins::Plugins::new(cx),
             code: Default::default(),
+            px0: Default::default(),
             dropdown: None,
             number_edit: None,
             number_preview: None,
             hex_edit: None,
+            #[cfg(windows)]
+            launch_at_login: Default::default(),
             error: appearance.error,
             status: None,
             focus: cx.focus_handle(),
@@ -337,6 +359,12 @@ impl SettingsWindow {
             cloud_tab: cloud_devices::first_tab(),
             #[cfg(feature = "cloud")]
             cloud_jobs_seen: 0,
+            #[cfg(feature = "cloud")]
+            cloud_jobs_drawn: 0,
+            #[cfg(feature = "cloud")]
+            cloud_devices_seen: 0,
+            #[cfg(feature = "azure")]
+            azure_card: None,
             #[cfg(feature = "boat")]
             boat_card: None,
             #[cfg(feature = "coder")]
@@ -467,8 +495,11 @@ impl SettingsWindow {
         let previous = cx.try_global::<crate::app::InitialAppearance>();
         let keys_changed =
             previous.is_none_or(|previous| previous.config.keybindings != self.config.keybindings);
-        let layout_changed =
-            previous.is_some_and(|previous| previous.config.layout.mode != self.config.layout.mode);
+        // Both layouts are checked in the View menu.
+        let layout_changed = previous.is_some_and(|previous| {
+            previous.config.layout.mode != self.config.layout.mode
+                || previous.config.tab_layout != self.config.tab_layout
+        });
         // Future windows inherit an explicit Settings draft, but not a main
         // picker's cancellable hover preview. Logs follow live appearance.
         let previewing = cx.windows().into_iter().any(|window| {
@@ -638,6 +669,7 @@ impl SettingsWindow {
         self.navigation_scroll.scroll_to_item(section.nav_item());
         if section == Section::Code {
             self.open_code_page(window, cx);
+            self.open_px0_settings(cx);
         }
         self.body_scroll.set_offset(Point::default());
         window.focus(&self.focus, cx);
@@ -724,6 +756,12 @@ impl Render for SettingsWindow {
                         div()
                             .id("settings-body")
                             .debug_selector(|| "settings-body".into())
+                            .role(Role::TabPanel)
+                            .aria_label(if searching.is_some() {
+                                "Results"
+                            } else {
+                                self.section.label()
+                            })
                             .flex_1()
                             .min_w_0()
                             .min_h_0()

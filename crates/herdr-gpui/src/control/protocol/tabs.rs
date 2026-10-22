@@ -42,6 +42,11 @@ pub(crate) enum TabOp {
         id: u64,
         path: String,
     },
+    /// How large a page tab draws its page.
+    Zoom {
+        id: u64,
+        change: ZoomChange,
+    },
     /// A read-only code tab on a local file, at a 1-based line.
     Code {
         path: String,
@@ -63,6 +68,7 @@ pub(crate) enum TabOp {
     },
     /// The review of the caller's workspace's uncommitted changes.
     Review,
+    Px0,
 }
 
 impl TabOp {
@@ -73,15 +79,27 @@ impl TabOp {
             | Self::Edit { .. }
             | Self::Devices
             | Self::Orchestrator { .. }
-            | Self::Review => ARRIVE_WAIT_SECONDS,
+            | Self::Review
+            | Self::Px0 => ARRIVE_WAIT_SECONDS,
             Self::List { .. }
             | Self::Focus { .. }
             | Self::Close { .. }
             | Self::Navigate { .. }
             | Self::Back { .. }
-            | Self::Forward { .. } => 0,
+            | Self::Forward { .. }
+            | Self::Zoom { .. } => 0,
         }
     }
+}
+
+/// A step in or out, back to 100%, or a zoom of its own, in percent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ZoomChange {
+    In,
+    Out,
+    Reset,
+    Percent { percent: u16 },
 }
 
 impl TabKind {
@@ -136,9 +154,21 @@ pub(crate) struct TabInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Reply {
-    Tabs { tabs: Vec<TabInfo> },
-    Opened { id: u64, workspace: String },
-    Text { text: String },
+    Tabs {
+        tabs: Vec<TabInfo>,
+    },
+    Opened {
+        id: u64,
+        workspace: String,
+    },
+    Text {
+        text: String,
+    },
+    /// The zoom a page tab draws at now, in percent.
+    Zoom {
+        id: u64,
+        percent: u16,
+    },
 }
 
 #[cfg(test)]
