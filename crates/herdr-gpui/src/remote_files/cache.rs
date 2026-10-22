@@ -222,14 +222,14 @@ pub(super) fn staged_path(local: &Path) -> PathBuf {
     beside(local, "push")
 }
 
-/// `local`'s name with a serial number unique in this process and
-/// `extension` added, in `local`'s folder.
+/// A hidden name in `local`'s folder made of a serial number unique in this
+/// process and `extension`. It leaves out `local`'s own name, which may
+/// already be as long as a file name can be; the folder holds this one
+/// copy alone, so the short name cannot be mistaken for another's.
 fn beside(local: &Path, extension: &str) -> PathBuf {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
-    let mut name = local.file_name().unwrap_or_default().to_owned();
-    name.push(format!(".{serial}.{extension}"));
-    local.with_file_name(name)
+    local.with_file_name(format!(".{serial}.{extension}"))
 }
 
 /// Creates `path` and any missing parents, private to the user.
