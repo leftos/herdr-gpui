@@ -157,8 +157,8 @@ pub struct Fetched {
 /// entries start with, the links its archive leaves out, and its regular files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbedFolder {
-    /// The tree's size in bytes, rounded up to KiB: a POSIX host's `du` counts
-    /// allocated blocks, and a Windows host sums file lengths.
+    /// The sum of the tree's regular files' sizes in bytes, before
+    /// compression; links and directories add nothing.
     pub bytes: u64,
     /// SHA-256 of a sorted metadata listing of every entry, or `None` when
     /// the host has no SHA-256 tool.
@@ -263,7 +263,7 @@ pub fn fetch_remote_file(
 ///     cancelled: Kills the probe when set.
 ///
 /// Returns:
-///     The folder's size in bytes, rounded up to KiB, a SHA-256 over its
+///     The sum of the folder's regular files' bytes, a SHA-256 over its
 ///     sorted metadata listing when the host has a SHA-256 tool, the top name
 ///     its archive's entries start with, the number of entries the host's
 ///     archive leaves out as links, and the number of regular files in the
@@ -437,14 +437,14 @@ fn classify_probe(error: crate::Error) -> Error {
     }
 }
 
-/// Parse the probe's answer: a decimal KiB count, `-` or a lowercase SHA-256,
+/// Parse the probe's answer: a decimal byte count, `-` or a lowercase SHA-256,
 /// the name the archive's entries start with, the number of entries the
 /// archive leaves out, and the number of regular files in the tree, each on
 /// its own line.
 fn parse_probe_output(bytes: &[u8]) -> std::result::Result<ProbedFolder, Error> {
     let text = std::str::from_utf8(bytes).map_err(|_| Error::FolderProbe)?;
     let mut lines = text.lines();
-    let kib = lines.next().ok_or(Error::FolderProbe)?;
+    let size = lines.next().ok_or(Error::FolderProbe)?;
     let sum = lines.next().ok_or(Error::FolderProbe)?;
     let top = lines.next().ok_or(Error::FolderProbe)?;
     let links = lines.next().ok_or(Error::FolderProbe)?;
@@ -452,9 +452,8 @@ fn parse_probe_output(bytes: &[u8]) -> std::result::Result<ProbedFolder, Error> 
     if lines.next().is_some() {
         return Err(Error::FolderProbe);
     }
-    let kib = parse_decimal(kib)?;
     Ok(ProbedFolder {
-        bytes: kib.checked_mul(1024).ok_or(Error::FolderProbe)?,
+        bytes: parse_decimal(size)?,
         fingerprint: parse_fingerprint(sum)?,
         top: parse_top(top)?,
         links_skipped: parse_count(links)?,

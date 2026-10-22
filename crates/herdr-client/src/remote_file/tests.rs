@@ -5,6 +5,8 @@ mod folder;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod folder_exec;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod folder_size;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -28,6 +30,20 @@ fn payload(len: usize) -> Vec<u8> {
     }
     bytes.truncate(len);
     bytes
+}
+
+/// The bytes in [`small_tree`]'s regular files: 6 + 13 + 13.
+const SMALL_TREE_BYTES: u64 = 32;
+
+/// Makes a folder at `root` of three small files, one of them in a
+/// subfolder, and on Unix a link to one of them, which no probe counts.
+fn small_tree(root: &Path) {
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("a.txt"), b"alpha\n").unwrap();
+    std::fs::write(root.join("b.md"), b"# notes\nbody\n").unwrap();
+    std::fs::write(root.join("sub").join("c.rs"), b"fn main() {}\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("../a.txt", root.join("sub").join("link")).unwrap();
 }
 
 /// The script failure inside `error`, if that is what it is.
