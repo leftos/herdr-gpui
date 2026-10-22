@@ -2325,7 +2325,8 @@ resolving a relative path under the pane's working directory, and asks again if
 that path is missing too. The click's query, fragment or line is kept only
 while the field is unchanged. **Cancel** or Escape opens nothing.
 
-In both dialogs a typed path is read in the clicked host's own shell. On a
+In both dialogs, and in the folder question below, a typed path is read in the
+clicked host's own shell. On a
 Windows host an edited `~/notes.md` is fetched as `~\notes.md`, and `/srv/x.md`
 as `\srv\x.md` on the drive of the pane's working directory. On a POSIX host
 `~\notes.md` is fetched as `~/notes.md`, and **Open** does nothing for a drive

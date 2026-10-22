@@ -1,4 +1,5 @@
 use super::*;
+use crate::window::HerdrWindow;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
@@ -8,11 +9,13 @@ mod dismissed_conflict;
 mod fetch_meta;
 mod fetch_swap;
 mod fetches;
+mod folder_shell;
 mod folder_sizes;
 mod folders;
 mod missing_dialog;
 mod queries;
 mod raw_join;
+mod raw_join_folders;
 mod saves;
 mod windows_names;
 
