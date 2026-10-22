@@ -319,18 +319,51 @@ fn a_remote_copy_that_grows_during_its_push_sends_the_length_it_had() {
         1024,
     )
     .unwrap();
-    assert_eq!(host.received()[0].bytes, NOTES, "the stat'ed length only");
+    assert_eq!(host.received()[0].bytes, NOTES, "the staged length only");
     assert_eq!(pushed.sha256, sha(NOTES), "the hash of the bytes sent");
     assert_eq!(pushed.meta.len, NOTES.len() as u64);
 }
 
 #[test]
-fn a_remote_copy_that_shrinks_during_its_push_is_cut_off() {
+fn a_remote_copy_rewritten_during_its_push_sends_the_save_staged_before() {
     let host = FakeHost::new();
     let (_, _, local) = fetched(&host);
     let io = saving_during_push(&host, local.clone(), |local| {
         std::fs::write(local, b"#").unwrap();
     });
+    let pushed = push_copy(
+        &io,
+        &remote(PATH),
+        &local,
+        (Expect::Any, RemoteFileAccess::Keep),
+        1024,
+    )
+    .unwrap();
+    assert_eq!(host.received()[0].bytes, NOTES, "one save, whole");
+    assert_eq!(pushed.sha256, sha(NOTES));
+    assert_eq!(pushed.meta.len, NOTES.len() as u64);
+    assert_eq!(std::fs::read(&local).unwrap(), b"#", "the new save stays");
+    assert_eq!(
+        std::fs::read_dir(local.parent().unwrap()).unwrap().count(),
+        1,
+        "no staged file left"
+    );
+}
+
+#[test]
+fn a_remote_push_that_reads_short_is_cut_off() {
+    let host = FakeHost::new();
+    let (files, _, local) = fetched(&host);
+    let io = Io {
+        push: Arc::new(|_, _, _, _, input| {
+            let mut first = [0; 1];
+            input
+                .read_exact(&mut first)
+                .map_err(herdr_client::Error::Io)?;
+            Ok(())
+        }),
+        ..files.io.clone()
+    };
     let Err(error) = push_copy(
         &io,
         &remote(PATH),
