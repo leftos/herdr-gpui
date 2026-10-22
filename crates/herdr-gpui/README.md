@@ -2295,12 +2295,26 @@ holding the copy. Windows OpenSSH hosts are reached through Windows PowerShell
 5.1 or later, and other hosts through `/bin/sh`. Files up to 64 MB are fetched;
 a larger file shows why nothing opened.
 
-When the host has no file at the clicked path, a dialog shows the path in an
-editable field. If the click read a path across a raw wrap, the field holds the
-first row's part instead. **Open** fetches what the field holds, resolving a
-relative path under the pane's working directory, and asks again if that path is
-missing too. The click's query, fragment or line is kept only while the field is
-unchanged. **Cancel** or Escape opens nothing.
+When a path ran onto a second line and its first line alone reads as a
+different path, the click asks before fetching anything, even for a path whose
+copy is already cached. The dialog "Open from {target}?" says the path ran onto
+a second line, which may be other output, and holds the joined path in an
+editable field. **Open** (Enter) fetches what the field holds, **First line
+only** puts the first line's part in the field without opening, and **Cancel**
+or Escape opens nothing. The click's query, fragment or line is kept only while
+the field holds the joined path.
+
+When the host has no file at the clicked path, a dialog shows the path that was
+asked for in an editable field. **Open** fetches what the field holds,
+resolving a relative path under the pane's working directory, and asks again if
+that path is missing too. The click's query, fragment or line is kept only
+while the field is unchanged. **Cancel** or Escape opens nothing.
+
+In both dialogs a typed path is read in the clicked host's own shell. On a
+Windows host an edited `~/notes.md` is fetched as `~\notes.md`, and `/srv/x.md`
+as `\srv\x.md` on the drive of the pane's working directory. On a POSIX host
+`~\notes.md` is fetched as `~/notes.md`, and **Open** does nothing for a drive
+or UNC path.
 
 A folder printed there is copied the same way. The app first asks the host how
 large the folder's contents are and how many files it holds, then asks before
@@ -2309,8 +2323,11 @@ and the size and file count before compression, with **Copy** (Enter) and
 **Cancel**. Copy fetches the folder as one archive — a gzipped tar stream on a
 POSIX host, a zip built on a Windows host — unpacks it into the cache and opens
 the unpacked folder. Editing the path first opens the typed path as a click
-would, and a typed folder asks its own question. A folder the host does not
-have opens the same dialog as a missing file. An archive larger than
+would, and a typed folder asks its own question. A folder path that ran onto a
+second line asks "Open from {target}?" first, before the host is asked about
+it or a cached copy reopens; a path opened from there that is a folder then
+asks this question too. A folder the host does not have opens the same dialog
+as a missing file. An archive larger than
 `remote_files.folder_transfer_cap_mb` (512 MB by default) is refused; set it in
 Settings > General under Links, or as a `[remote_files]` key in
 `config-gpui.local.toml`.
