@@ -69,6 +69,8 @@ pub enum Error {
     SharedFolder,
     #[error("Not uploaded: the copy is larger than {} MB", .limit.div_ceil(MB))]
     TooLarge { limit: u64 },
+    #[error("Not uploaded: the copy kept changing while it was read; save it again")]
+    Unsettled,
     // keep-sorted end
 }
 

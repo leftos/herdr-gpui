@@ -216,14 +216,31 @@ pub(super) fn kept_path(local: &Path) -> PathBuf {
     beside(local, "kept")
 }
 
-/// `local`'s name with a serial number unique in this process and
-/// `extension` added, in `local`'s folder.
+/// Where a push stages the copy at `local` before sending it: beside it,
+/// under a name no other push of this process has.
+pub(super) fn staged_path(local: &Path) -> PathBuf {
+    beside(local, "push")
+}
+
+/// A hidden name in `local`'s folder made of a serial number unique in this
+/// process and `extension`. It leaves out `local`'s own name, which may
+/// already be as long as a file name can be. The folder holds this one copy
+/// alone, so skipping a name equal to the copy's own, which a host's file
+/// named like `.0.part` would have, is all that keeps them apart; a failed
+/// write or its cleanup then never touches the copy.
 fn beside(local: &Path, extension: &str) -> PathBuf {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
-    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
-    let mut name = local.file_name().unwrap_or_default().to_owned();
-    name.push(format!(".{serial}.{extension}"));
-    local.with_file_name(name)
+    beside_from(local, extension, || SERIAL.fetch_add(1, Ordering::Relaxed))
+}
+
+/// [`beside`] with the serial numbers drawn from `next`.
+pub(super) fn beside_from(local: &Path, extension: &str, mut next: impl FnMut() -> u64) -> PathBuf {
+    loop {
+        let path = local.with_file_name(format!(".{}.{extension}", next()));
+        if path != local {
+            return path;
+        }
+    }
 }
 
 /// Creates `path` and any missing parents, private to the user.
