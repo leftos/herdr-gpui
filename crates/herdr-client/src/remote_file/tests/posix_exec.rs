@@ -890,3 +890,17 @@ fn push_absent_never_renames_over_a_file_that_appeared() {
     assert_eq!(std::fs::read(&target).unwrap(), b"planted");
     assert_eq!(entries(fixture.home.path()), ["new"]);
 }
+
+/// A file whose name is as long as a name can be: the work folder's name
+/// must not grow from it.
+#[test]
+fn push_writes_a_file_with_the_longest_name() {
+    let fixture = Fixture::new();
+    let name = "n".repeat(255);
+    std::fs::write(fixture.path(&name), b"old").unwrap();
+    fixture
+        .push(&fixture.text(&name), Expect::Any, b"new")
+        .unwrap();
+    assert_eq!(std::fs::read(fixture.path(&name)).unwrap(), b"new");
+    assert_eq!(entries(fixture.home.path()), [name]);
+}
