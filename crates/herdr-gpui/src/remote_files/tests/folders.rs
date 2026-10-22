@@ -697,6 +697,15 @@ fn kept_beside(local: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Everything in the folder holding the copy at `local`, so a file left
+/// under a transient name shows.
+fn held_beside(local: &Path) -> std::collections::BTreeSet<PathBuf> {
+    std::fs::read_dir(local.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect()
+}
+
 #[gpui::test]
 fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext) {
     let host = FakeHost::new();
@@ -714,6 +723,7 @@ fn a_file_that_became_a_folder_is_replaced_by_the_folder(cx: &mut TestAppContext
         Vec::<PathBuf>::new(),
         "an unedited copy is not kept"
     );
+    assert_eq!(held_beside(&local), [local.clone()].into());
 }
 
 #[gpui::test]
@@ -729,6 +739,7 @@ fn an_edited_file_that_became_a_folder_is_kept_beside_the_folder(cx: &mut TestAp
     let kept = kept_beside(&local);
     assert_eq!(kept.len(), 1, "the edited copy is kept: {kept:?}");
     assert_eq!(kept[0], local.with_file_name("src.kept"));
+    assert_eq!(held_beside(&local), [local.clone(), kept[0].clone()].into());
     assert_eq!(std::fs::read(&kept[0]).unwrap(), edits);
     let text = flash_text(&view, cx).expect("the kept copy is reported");
     let kept_name = kept[0].file_name().unwrap().to_string_lossy().into_owned();
@@ -750,6 +761,8 @@ fn a_file_copy_with_no_synced_state_is_kept_beside_the_folder(cx: &mut TestAppCo
     assert!(local.is_dir(), "the folder takes the copy's place");
     let kept = kept_beside(&local);
     assert_eq!(kept.len(), 1, "a copy not known unedited is kept: {kept:?}");
+    let src_kept = local.with_file_name("src.kept");
+    assert_eq!(held_beside(&local), [local.clone(), src_kept].into());
     assert_eq!(std::fs::read(&kept[0]).unwrap(), NOTES);
 }
 

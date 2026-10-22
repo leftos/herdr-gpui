@@ -508,10 +508,11 @@ pub(super) fn keep_beside(moved: &Path, local: &Path) -> PathBuf {
 
 /// Makes the file at `from` also the file at `to` without replacing one
 /// there: a hard link, or a rename once nothing is at `to` where the file
-/// system has no hard links.
+/// system refuses hard links (see [`renames_after`]).
 fn link_new(from: &Path, to: &Path) -> io::Result<()> {
     match std::fs::hard_link(from, to) {
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+        Err(error) if renames_after(error.kind()) => {
+            tracing::debug!(%error, kept = %to.display(), "No hard link beside the folder copy; renaming the kept copy");
             if std::fs::symlink_metadata(to).is_ok() {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }
@@ -519,6 +520,14 @@ fn link_new(from: &Path, to: &Path) -> io::Result<()> {
         }
         linked => linked,
     }
+}
+
+/// Whether a hard link that failed with `kind` falls back to a rename. File
+/// systems without hard links refuse them under different kinds (vfat and
+/// exFAT on Linux with `PermissionDenied`, FAT on Windows uncategorized), so
+/// every kind does, except a name already taken and a copy no longer there.
+pub(super) fn renames_after(kind: io::ErrorKind) -> bool {
+    !matches!(kind, io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound)
 }
 
 /// The archive format a host's shell sends a folder in.
