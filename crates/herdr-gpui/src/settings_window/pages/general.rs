@@ -194,15 +194,6 @@ impl SettingsWindow {
             .child(ui::section(theme, "Links", None))
             .child(self.folder_size_row(
                 cx,
-                "general-folder-warning",
-                "Warn above",
-                "Before copying a folder printed in an SSH pane, when its contents are \
-                 larger than this.",
-                NumberField::FolderWarningMb,
-                self.config.remote_files.folder_warning_mb as f32,
-            ))
-            .child(self.folder_size_row(
-                cx,
                 "general-folder-cap",
                 "Refuse above",
                 "A folder archive larger than this is not copied.",

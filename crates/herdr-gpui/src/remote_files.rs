@@ -39,7 +39,7 @@ use std::{
 };
 
 pub(crate) use cache::{Cache, basename};
-pub(crate) use folders::{FolderPrompt, FolderQuestion};
+pub(crate) use folders::{FolderPrompt, FolderQuestion, file_count, folder_size};
 pub(crate) use sync::{Answer, Policy, Resolution, SyncState};
 
 /// Bytes in the megabyte that [`Error::TooLarge`] reports.
@@ -76,7 +76,7 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
-    #[error("The folder is larger than {} MB, so it was not copied", .limit.div_ceil(MB))]
+    #[error("The folder's archive is larger than {} MB, so it was not copied", .limit.div_ceil(MB))]
     FolderTooLarge { limit: u64 },
     #[error("Could not keep both: every name up to {last} is taken on the host")]
     NamesTaken { last: String },
@@ -890,7 +890,7 @@ impl HerdrWindow {
             .folder(&remote.target, &remote.path)
             .is_some()
         {
-            self.open_remote_folder(remote, cx);
+            self.open_remote_folder(remote, cwd, cx);
             return;
         }
         if !self.remote_files.fetch_again(&remote) {
@@ -972,7 +972,7 @@ impl HerdrWindow {
                     ))
                 ) =>
             {
-                self.open_remote_folder(remote, cx);
+                self.open_remote_folder(remote, click.cwd, cx);
             }
             // The poll opens the question once no page holds the window.
             Err(error) if error.is_missing() => {

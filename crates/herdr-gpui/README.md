@@ -2303,18 +2303,23 @@ missing too. The click's query, fragment or line is kept only while the field is
 unchanged. **Cancel** or Escape opens nothing.
 
 A folder printed there is copied the same way. The app first asks the host how
-large the folder's contents are, then fetches the folder as one archive — a
-gzipped tar stream on a POSIX host, a zip built on a Windows host — unpacks it
-into the cache and opens the unpacked folder. A folder whose contents exceed
-`remote_files.folder_warning_mb` (64 MB by default) asks first, with **Transfer
-anyway** and **Cancel**, and an archive larger than
-`remote_files.folder_transfer_cap_mb` (512 MB by default) is refused. Both
-numbers are set in Settings > General under Links, or as `[remote_files]` keys
-in `config-gpui.local.toml`.
+large the folder's contents are and how many files it holds, then asks before
+copying: **Copy this folder from {host}?** shows the path in an editable field
+and the size and file count before compression, with **Copy** (Enter) and
+**Cancel**. Copy fetches the folder as one archive — a gzipped tar stream on a
+POSIX host, a zip built on a Windows host — unpacks it into the cache and opens
+the unpacked folder. Editing the path first opens the typed path as a click
+would, and a typed folder asks its own question. A folder the host does not
+have opens the same dialog as a missing file. An archive larger than
+`remote_files.folder_transfer_cap_mb` (512 MB by default) is refused; set it in
+Settings > General under Links, or as a `[remote_files]` key in
+`config-gpui.local.toml`.
 
 Clicking the folder again fingerprints the host's tree. An unchanged tree
-reopens the copy without transferring; a changed one offers **Re-fetch** or
-**Open existing**. Symbolic and hard links and other special entries are
+reopens the copy without asking or transferring. A changed one, or one on a
+host with no SHA-256 tool, asks again with the host's new size and count and
+the size of your copy: **Re-fetch**, **Open existing** (Enter) or **Cancel**.
+Symbolic and hard links and other special entries are
 skipped inside the archive and counted, and the transfer says how many. An
 archive may hold at most 100,000 entries and expand to at most 2 GB, and every
 entry must be a plain path under the folder's own name; anything else is

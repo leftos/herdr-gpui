@@ -70,8 +70,8 @@ pub(crate) struct MenuState {
     pub(super) open_link: Option<crate::terminal::ExternalUrl>,
     /// The copy the remote file questions are about.
     pub(super) remote_file: Option<crate::remote_files::Key>,
-    /// The folder question the window shows.
-    pub(crate) remote_folder: Option<crate::remote_files::FolderPrompt>,
+    /// The folder question the window shows, and its field.
+    pub(super) remote_folder: Option<super::remote_file_dialogs::FolderDialog>,
     /// The missing file the not-on-host question is about, and its field.
     pub(super) remote_missing: Option<super::remote_file_dialogs::MissingDialog>,
     #[cfg(feature = "coder")]
