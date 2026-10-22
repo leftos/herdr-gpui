@@ -2308,7 +2308,14 @@ private cache folder and opens the copy, under the same rule as a local file: a
 document opens in its default application, and anything else opens the folder
 holding the copy. Windows OpenSSH hosts are reached through Windows PowerShell
 5.1 or later, and other hosts through `/bin/sh`. Files up to 64 MB are fetched;
-a larger file or a missing one shows why nothing opened.
+a larger file shows why nothing opened.
+
+When the host has no file at the clicked path, a dialog shows the path in an
+editable field. If the click read a path across a raw wrap, the field holds the
+first row's part instead. **Open** fetches what the field holds, resolving a
+relative path under the pane's working directory, and asks again if that path is
+missing too. The click's query, fragment or line is kept only while the field is
+unchanged. **Cancel** or Escape opens nothing.
 
 A folder printed there is copied the same way. The app first asks the host how
 large the folder's contents are, then fetches the folder as one archive — a
