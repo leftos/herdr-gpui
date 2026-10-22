@@ -1,10 +1,10 @@
 //! The folder probe and archive scripts. A POSIX host runs them under
 //! `/bin/sh`; a Windows OpenSSH host runs them under Windows PowerShell. The
-//! probe prints a folder's size, a fingerprint of its tree, the name its
-//! archive's entries start with, and the entries its archive leaves out as
-//! links; the archive streams a gzipped tar (POSIX) or a zip (PowerShell) of
-//! the folder to stdout. Both shells use the same exit-code contract as the
-//! file transfer scripts.
+//! probe prints five lines: a folder's size, a fingerprint of its tree, the
+//! name its archive's entries start with, the entries its archive leaves out
+//! as links, and the regular files in its tree; the archive streams a gzipped
+//! tar (POSIX) or a zip (PowerShell) of the folder to stdout. Both shells use
+//! the same exit-code contract as the file transfer scripts.
 
 use super::{
     MISSING_EXIT, NOT_A_FILE_EXIT, TOO_LARGE_EXIT,
@@ -14,8 +14,10 @@ use super::{
 
 /// The `/bin/sh` script that prints the folder's size in KiB, a SHA-256 of a
 /// sorted metadata listing of its tree (or `-` when the host has no SHA-256
-/// tool), the name its archive's entries start with, and `0` for the links
-/// its archive leaves out.
+/// tool), the name its archive's entries start with, `0` for the links its
+/// archive leaves out, and the number of regular files in the tree. `find
+/// -type f` neither follows nor counts links, and `%.0sx` prints one `x` per
+/// path, so a file name holding a newline still counts once.
 pub(super) fn posix_probe_script(path: &str) -> String {
     format!(
         r#"{assign}
@@ -42,7 +44,10 @@ else
 printf '%s\n' '-'
 fi
 printf '%s\n' "$top"
-printf '%s\n' 0"#,
+printf '%s\n' 0
+files=$(find "$path" -type f -exec printf '%.0sx' {{}} + | wc -c | tr -d ' ') || exit 1
+case $files in ''|*[!0-9]*) exit 1 ;; esac
+printf '%s\n' "$files""#,
         assign = path_assignment(path),
         hasher = choose_hasher(None),
     )
@@ -68,9 +73,11 @@ exec tar -czf - -C "$dir" -- "$base""#,
 }
 
 /// The PowerShell script that prints the folder's size in KiB, a SHA-256 of
-/// its sorted metadata listing, the name its archive's entries start with, and
-/// the number of reparse points it skipped. Directories are walked with an
-/// explicit stack because `Get-ChildItem -Recurse` follows junctions on
+/// its sorted metadata listing, the name its archive's entries start with, the
+/// number of reparse points it skipped, and the number of regular files it
+/// summed; directories and reparse points are not counted. Directories are
+/// walked with an explicit stack because `Get-ChildItem -Recurse` follows
+/// junctions on
 /// Windows PowerShell 5.1; reparse points are skipped here. The answer is
 /// written to stdout as UTF-8 bytes, since `Write-Output` encodes with the
 /// console's code page and would garble a non-ASCII folder name.
@@ -93,6 +100,7 @@ $directories.Push($path)
 $entries = New-Object System.Collections.Generic.List[object]
 [long]$total = 0
 [int]$skipped = 0
+[long]$files = 0
 while ($directories.Count -gt 0) {{
     $directory = $directories.Pop()
     $normalized = [System.IO.Path]::GetFullPath($directory).TrimEnd([char[]]@('\', '/'))
@@ -112,6 +120,7 @@ while ($directories.Count -gt 0) {{
         }} else {{
             $info = [System.IO.FileInfo]::new($item)
             $total += $info.Length
+            $files++
             $relative = [System.IO.Path]::GetFullPath($item).Substring($prefix.Length).Replace('\', '/')
             $entries.Add([pscustomobject]@{{
                 Relative = $relative
@@ -134,7 +143,7 @@ try {{
     $sha.Dispose()
 }}
 $kib = [long][Math]::Ceiling([double]$total / 1024)
-$answer = [string]::Join("`n", @($kib.ToString(), $digest, $base, ([long]$skipped).ToString())) + "`n"
+$answer = [string]::Join("`n", @($kib.ToString(), $digest, $base, ([long]$skipped).ToString(), $files.ToString())) + "`n"
 $answerBytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($answer)
 $stdout = [Console]::OpenStandardOutput()
 $stdout.Write($answerBytes, 0, $answerBytes.Length)

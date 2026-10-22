@@ -724,11 +724,15 @@ fetch_remote_folder(folder: RemoteFile, out: impl Write, max_bytes: u64,
 ```
 
 These size a host folder without transferring it and stream the folder as one
-archive, for the GUI's folder links. `probe_remote_folder` returns the tree's
-uncompressed size, rounded up to KiB, and a SHA-256 over a sorted metadata
-listing of every entry when the host has a SHA-256 tool, or `None` when it has
-none. It runs the same shells and quoting as a file fetch; `NotAFolder` means
-the path is a file now.
+archive, for the GUI's folder links. `probe_remote_folder` returns a
+`ProbedFolder`: the tree's uncompressed size in `bytes`, rounded up to KiB; a
+SHA-256 `fingerprint` over a sorted metadata listing of every entry when the
+host has a SHA-256 tool, or `None` when it has none; `top`, the name the
+archive's entries start with; `links_skipped`, the entries a Windows host's
+archive leaves out as reparse points (0 on a POSIX host, whose archive carries
+links); and `files`, the regular files in the tree, counting neither links nor
+directories. It runs the same shells and quoting as a file fetch;
+`NotAFolder` means the path is a file now.
 
 `fetch_remote_folder` writes a gzipped tar stream on a POSIX host and a zip on
 a Windows OpenSSH host. Every archive entry starts with the folder's own name,

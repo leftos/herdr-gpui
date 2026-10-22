@@ -21,6 +21,7 @@ fn sized(bytes: u64, fingerprint: Option<[u8; 32]>) -> herdr_client::Result<Prob
         fingerprint,
         top: "src".into(),
         links_skipped: 0,
+        files: 3,
     })
 }
 
@@ -31,6 +32,7 @@ fn with_links(count: u32) -> herdr_client::Result<ProbedFolder> {
         fingerprint: Some([7; 32]),
         top: "src".into(),
         links_skipped: count,
+        files: 3,
     })
 }
 

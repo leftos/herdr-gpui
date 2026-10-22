@@ -325,9 +325,9 @@ fn messages_are_short_and_plain() {
 }
 
 #[test]
-fn probe_answers_are_four_strict_lines() {
+fn probe_answers_are_five_strict_lines() {
     let digest = "ab".repeat(32);
-    let valid = format!("12\n{digest}\nsrc\n0\n");
+    let valid = format!("12\n{digest}\nsrc\n0\n3\n");
     assert_eq!(
         parse_probe_output(valid.as_bytes()).unwrap(),
         ProbedFolder {
@@ -335,25 +335,30 @@ fn probe_answers_are_four_strict_lines() {
             fingerprint: Some([0xab; 32]),
             top: "src".into(),
             links_skipped: 0,
+            files: 3,
         }
     );
-    let absent = parse_probe_output(b"12\n-\nsrc\n7\n").unwrap();
+    let absent = parse_probe_output(b"12\n-\nsrc\n7\n0\n").unwrap();
     assert_eq!(absent.fingerprint, None);
     assert_eq!(absent.links_skipped, 7);
-    assert_eq!(parse_probe_output(b"12\n-\n.\n0\n").unwrap().top, ".");
+    assert_eq!(absent.files, 0);
+    assert_eq!(parse_probe_output(b"12\n-\n.\n0\n1\n").unwrap().top, ".");
 
     let bad = [
-        "12\n-\nsrc\n".to_owned(),
-        "12\n-\nsrc\n0\n5\n".to_owned(),
-        "12\n-\n\n0\n".to_owned(),
-        "12\n-\na/b\n0\n".to_owned(),
-        "12\n-\na\u{7}b\n0\n".to_owned(),
-        format!("12\n+{digest}\nsrc\n0\n"),
-        format!("12\n{}\nsrc\n0\n", "A".repeat(64)),
-        format!("12\n{}\nsrc\n0\n", "a".repeat(65)),
-        "12\n-\nsrc\n+0\n".to_owned(),
-        "12\n-\nsrc\n 0\n".to_owned(),
-        format!("12\n-\nsrc\n{}\n", u64::from(u32::MAX) + 1),
+        "12\n-\nsrc\n0\n".to_owned(),
+        "12\n-\nsrc\n0\n5\n9\n".to_owned(),
+        "12\n-\nsrc\n0\nmany\n".to_owned(),
+        "12\n-\nsrc\n0\n\n".to_owned(),
+        "12\n-\nsrc\n0\n-1\n".to_owned(),
+        "12\n-\n\n0\n1\n".to_owned(),
+        "12\n-\na/b\n0\n1\n".to_owned(),
+        "12\n-\na\u{7}b\n0\n1\n".to_owned(),
+        format!("12\n+{digest}\nsrc\n0\n1\n"),
+        format!("12\n{}\nsrc\n0\n1\n", "A".repeat(64)),
+        format!("12\n{}\nsrc\n0\n1\n", "a".repeat(65)),
+        "12\n-\nsrc\n+0\n1\n".to_owned(),
+        "12\n-\nsrc\n 0\n1\n".to_owned(),
+        format!("12\n-\nsrc\n{}\n1\n", u64::from(u32::MAX) + 1),
     ];
     for answer in bad {
         assert!(
