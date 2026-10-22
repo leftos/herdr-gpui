@@ -676,7 +676,8 @@ fn file_copy_then_folder(
     local
 }
 
-/// The file copies a folder transfer left beside `local`, which may hold edits.
+/// The file copies a folder transfer left beside `local`, which may hold
+/// edits: `<name>.kept`, or `<name>.<n>.kept` when that was taken.
 fn kept_beside(local: &Path) -> Vec<PathBuf> {
     let name = local.file_name().unwrap().to_string_lossy().into_owned();
     std::fs::read_dir(local.parent().unwrap())
@@ -684,7 +685,14 @@ fn kept_beside(local: &Path) -> Vec<PathBuf> {
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
             let file = path.file_name().unwrap().to_string_lossy();
-            file.starts_with(&name) && file.ends_with(".kept")
+            let Some(rest) = file.strip_prefix(&name) else {
+                return false;
+            };
+            rest == ".kept"
+                || rest
+                    .strip_prefix('.')
+                    .and_then(|rest| rest.strip_suffix(".kept"))
+                    .is_some_and(|n| n.parse::<u32>().is_ok_and(|n| n >= 2))
         })
         .collect()
 }
@@ -720,6 +728,7 @@ fn an_edited_file_that_became_a_folder_is_kept_beside_the_folder(cx: &mut TestAp
     assert_eq!(std::fs::read(local.join("inner.txt")).unwrap(), b"inner");
     let kept = kept_beside(&local);
     assert_eq!(kept.len(), 1, "the edited copy is kept: {kept:?}");
+    assert_eq!(kept[0], local.with_file_name("src.kept"));
     assert_eq!(std::fs::read(&kept[0]).unwrap(), edits);
     let text = flash_text(&view, cx).expect("the kept copy is reported");
     let kept_name = kept[0].file_name().unwrap().to_string_lossy().into_owned();
