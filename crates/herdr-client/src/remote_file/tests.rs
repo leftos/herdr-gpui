@@ -2,7 +2,12 @@ use super::*;
 use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod posix_exec;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod posix_setgid;
 mod powershell_exec;
 mod scripts;
 
@@ -62,4 +67,123 @@ fn decode(encoded: &str) -> String {
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     String::from_utf16(&units).unwrap()
+}
+
+/// Runs the POSIX scripts under this machine's `/bin/sh` through the same
+/// runner an SSH host's scripts use.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct Fixture {
+    home: tempfile::TempDir,
+    /// The child's `PATH`; `None` keeps this process's.
+    path_env: Option<std::path::PathBuf>,
+    /// The umask the script starts with, as an SSH login sets one.
+    umask: &'static str,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Fixture {
+    fn new() -> Self {
+        Self {
+            home: tempfile::tempdir().unwrap(),
+            path_env: None,
+            umask: "022",
+        }
+    }
+
+    fn mode(&self, name: &str) -> u32 {
+        std::fs::metadata(self.path(name))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+
+    fn set_mode(&self, name: &str, mode: u32) {
+        std::fs::set_permissions(self.path(name), std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    fn path(&self, name: &str) -> std::path::PathBuf {
+        self.home.path().join(name)
+    }
+
+    fn text(&self, name: &str) -> String {
+        self.path(name).to_str().unwrap().to_owned()
+    }
+
+    fn command(&self, script: &str) -> Command {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", &format!("umask {}\n{script}", self.umask)])
+            .env("HOME", self.home.path());
+        if let Some(path) = &self.path_env {
+            command.env("PATH", path);
+        }
+        command
+    }
+
+    fn fetch(&self, path: &str, max_bytes: u64) -> std::result::Result<(Vec<u8>, Fetched), Error> {
+        let mut out = Vec::new();
+        let command = self.command(&posix::fetch_script(path, max_bytes));
+        let fetched = fetch_with(command, &mut out, max_bytes, &AtomicBool::new(false))?;
+        Ok((out, fetched))
+    }
+
+    fn push(&self, path: &str, expect: Expect, input: &[u8]) -> std::result::Result<(), Error> {
+        self.push_claiming(path, expect, input.len() as u64, input)
+    }
+
+    /// A push that says it sends `len` bytes and sends `input`.
+    fn push_claiming(
+        &self,
+        path: &str,
+        expect: Expect,
+        len: u64,
+        input: &[u8],
+    ) -> std::result::Result<(), Error> {
+        let command = self.command(&posix::push_script(path, expect, Access::Keep, len));
+        push_with(command, input, &AtomicBool::new(false))
+    }
+
+    /// A push of a new file at `path` that takes the access of `source`, as
+    /// a kept-both copy does.
+    fn push_like(&self, path: &str, source: &str, input: &[u8]) -> std::result::Result<(), Error> {
+        let script = posix::push_script(
+            path,
+            Expect::Absent,
+            Access::Like(source),
+            input.len() as u64,
+        );
+        push_with(self.command(&script), input, &AtomicBool::new(false))
+    }
+
+    /// Runs the scripts with a `chgrp` that always fails first on `PATH`, as
+    /// for a user outside the file's group. Keep the returned folder alive.
+    fn fail_chgrp(&mut self) -> tempfile::TempDir {
+        self.shim("chgrp", "exit 1\n")
+    }
+
+    /// Runs the scripts with a `/bin/sh` script named `tool` holding `body`
+    /// first on `PATH`. Keep the returned folder alive. The shim is written
+    /// from a child shell, so no sibling test's fork can hold it open for
+    /// writing when the script runs it.
+    fn shim(&mut self, tool: &str, body: &str) -> tempfile::TempDir {
+        let bin = tempfile::tempdir().unwrap();
+        let shim = bin.path().join(tool);
+        crate::test_executable::write(&shim, format!("#!/bin/sh\n{body}"), 0o755).unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut folders = vec![bin.path().to_owned()];
+        folders.extend(std::env::split_paths(&path));
+        self.path_env = Some(std::env::join_paths(folders).unwrap().into());
+        bin
+    }
+}
+
+/// Where this machine keeps `tool`.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn real_tool(tool: &str) -> std::path::PathBuf {
+    ["/bin", "/usr/bin"]
+        .iter()
+        .map(|folder| Path::new(folder).join(tool))
+        .find(|candidate| candidate.exists())
+        .unwrap()
 }
