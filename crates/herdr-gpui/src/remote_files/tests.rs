@@ -12,6 +12,7 @@ mod folder_sizes;
 mod folders;
 mod missing_dialog;
 mod queries;
+mod raw_join;
 mod saves;
 mod windows_names;
 
@@ -281,6 +282,63 @@ fn window<'a>(
     let (view, cx) = cx.add_window_view(crate::sidebar::layout_tests::fixture_window);
     view.update(cx, |view, _| host.serve(&mut view.remote_files, notes));
     (view, cx)
+}
+
+fn posix(path: &str) -> RemotePath {
+    RemotePath {
+        target: "me@devbox".into(),
+        shell: RemoteShell::Posix,
+        path: path.into(),
+        line: None,
+    }
+}
+
+/// A window whose host has none of the files asked for.
+fn on_empty_host<'a>(
+    host: &FakeHost,
+    cx: &'a mut TestAppContext,
+) -> (Entity<HerdrWindow>, &'a mut VisualTestContext) {
+    let (view, cx) = window(host, cx);
+    view.update(cx, |view, _| host.serve(&mut view.remote_files, missing));
+    (view, cx)
+}
+
+/// A click on `remote`, its fetch finished, and the poll that opens a
+/// waiting question.
+fn click(
+    view: &Entity<HerdrWindow>,
+    cx: &mut VisualTestContext,
+    remote: RemotePath,
+    unjoined: Option<RemotePath>,
+    cwd: Option<&str>,
+) {
+    let cwd = cwd.map(str::to_owned);
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote, None, unjoined, cwd, cx)
+    });
+    poll(view, cx);
+}
+
+fn poll(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    view.update_in(cx, |view, window, cx| view.poll_remote_files(window, cx));
+    cx.run_until_parked();
+}
+
+fn page(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<crate::menu::Page> {
+    view.read_with(cx, |view, _| view.menu.page)
+}
+
+/// The path the not-on-host question's field holds.
+fn field(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<String> {
+    view.read_with(cx, |view, cx| view.remote_missing_text(cx))
+}
+
+/// Types `text` over the field's selected path, and presses Enter.
+fn open(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, text: &str) {
+    cx.simulate_input(text);
+    cx.simulate_keystrokes("enter");
+    poll(view, cx);
 }
 
 #[test]

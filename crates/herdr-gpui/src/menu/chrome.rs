@@ -512,6 +512,7 @@ impl HerdrWindow {
                         | Page::OpenLink
                         | Page::RemoteConflict
                         | Page::RemoteFolder
+                        | Page::RemoteJoin
                         | Page::RemoteMissing
                         | Page::RemoteUpload
                 ) || self.cloud_batch_open(),
@@ -688,6 +689,8 @@ impl HerdrWindow {
             panel = panel.child(self.render_remote_conflict(cx));
         } else if page == Page::RemoteFolder {
             panel = panel.child(self.render_remote_folder(cx));
+        } else if page == Page::RemoteJoin {
+            panel = panel.child(self.render_remote_join(cx));
         } else if page == Page::RemoteMissing {
             panel = panel.child(self.render_remote_missing(cx));
         } else if page == Page::Install {

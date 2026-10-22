@@ -155,12 +155,10 @@ impl HerdrWindow {
             Err(herdr_client::Error::RemoteFile(RemoteFileError::Missing)) => {
                 self.remote_files.fetching.remove(&key);
                 tracing::info!(target = %remote.target, "Remote folder not on the host; asking for another path");
-                let prefill = remote.path.clone();
                 self.remote_files.missing.push_back(Missing {
                     remote,
                     query: None,
                     cwd,
-                    prefill,
                 });
                 cx.notify();
                 return;

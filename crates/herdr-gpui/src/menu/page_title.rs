@@ -76,6 +76,7 @@ impl Page {
             Self::PrReview => "Pull request",
             Self::RemoteConflict => "Remote file changed",
             Self::RemoteFolder => "Copy remote folder",
+            Self::RemoteJoin => "Open remote file",
             Self::RemoteMissing => "Remote file not found",
             Self::RemoteUpload => "Upload changes",
             Self::RemoveDevice => "Remove device",

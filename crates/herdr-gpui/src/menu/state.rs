@@ -72,6 +72,8 @@ pub(crate) struct MenuState {
     pub(super) remote_file: Option<crate::remote_files::Key>,
     /// The folder question the window shows, and its field.
     pub(super) remote_folder: Option<super::remote_file_dialogs::FolderDialog>,
+    /// The raw-joined click the which-path question is about, and its field.
+    pub(super) remote_join: Option<super::remote_join_dialog::JoinDialog>,
     /// The missing file the not-on-host question is about, and its field.
     pub(super) remote_missing: Option<super::remote_file_dialogs::MissingDialog>,
     /// The batch the destroy-cloud-devices question is about. Dropping it
@@ -334,6 +336,7 @@ impl MenuState {
             open_link: None,
             remote_file: None,
             remote_folder: None,
+            remote_join: None,
             remote_missing: None,
             #[cfg(feature = "cloud")]
             cloud_create: None,
@@ -413,6 +416,7 @@ impl MenuState {
         self.open_link = None;
         self.remote_file = None;
         self.remote_folder = None;
+        self.remote_join = None;
         self.remote_missing = None;
         #[cfg(feature = "cloud")]
         {
