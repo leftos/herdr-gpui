@@ -12,6 +12,7 @@ mod fetches;
 mod folder_shell;
 mod folder_sizes;
 mod folders;
+mod kept_names;
 mod long_names;
 mod missing_dialog;
 mod queries;

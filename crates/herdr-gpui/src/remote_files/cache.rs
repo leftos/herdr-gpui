@@ -30,6 +30,9 @@ const FALLBACK_NAME: &str = "file";
 /// The characters a Windows file name cannot hold, besides control characters.
 const WINDOWS_REFUSED: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
+/// The most bytes a file name holds on every file system the cache is on.
+const NAME_BYTES: usize = 255;
+
 /// Hex digits of SHA-256 naming a host's or a path's folder.
 const HASH_DIGITS: usize = 16;
 
@@ -215,6 +218,47 @@ pub(super) fn part_path(local: &Path) -> PathBuf {
 /// process has.
 pub(super) fn kept_path(local: &Path) -> PathBuf {
     beside(local, "kept")
+}
+
+/// The readable name a copy named `name` is kept under for good beside the
+/// folder that took its place: `<name>.kept` for the first (`n` of 1), else
+/// `<name>.<n>.kept`. `name` is cut on a character boundary, keeping its
+/// extension where that fits, so the whole is at most [`NAME_BYTES`].
+pub(super) fn kept_name(name: &str, n: u32) -> String {
+    let suffix = if n <= 1 {
+        ".kept".to_owned()
+    } else {
+        format!(".{n}.kept")
+    };
+    let room = NAME_BYTES.saturating_sub(suffix.len());
+    format!("{}{suffix}", shortened(name, room))
+}
+
+/// `name` in at most `room` bytes: whole when it fits, else its stem cut to
+/// leave room for its extension, or the whole name cut when the extension
+/// leaves none.
+fn shortened(name: &str, room: usize) -> Cow<'_, str> {
+    if name.len() <= room {
+        return Cow::Borrowed(name);
+    }
+    match name.rfind('.').filter(|&dot| dot > 0) {
+        Some(dot) if name.len() - dot < room => {
+            let extension = &name[dot..];
+            let stem = cut(&name[..dot], room - extension.len());
+            Cow::Owned(format!("{stem}{extension}"))
+        }
+        _ => Cow::Borrowed(cut(name, room)),
+    }
+}
+
+/// The longest start of `text` of at most `bytes` bytes that ends on a
+/// character boundary.
+fn cut(text: &str, bytes: usize) -> &str {
+    let mut end = bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// Where a push stages the copy at `local` before sending it: beside it,
