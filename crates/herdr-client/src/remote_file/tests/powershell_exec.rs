@@ -348,7 +348,7 @@ fn powershell_push_temporary_file_takes_the_targets_acl() {
         let mut input = child.stdin.take().unwrap();
         input.write_all(b"new").unwrap();
         input.flush().unwrap();
-        let temporary = wait_for_temporary(home.path(), ".secret.txt.", &mut child);
+        let temporary = wait_for_temporary(home.path(), ".herdr-push.", &mut child);
         // Reading an ACL needs only READ_CONTROL, which `FileShare.None`
         // allows.
         let temporary_sddl = sddl(&temporary);
