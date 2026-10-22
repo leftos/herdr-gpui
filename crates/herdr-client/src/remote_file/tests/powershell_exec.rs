@@ -81,6 +81,33 @@ fn run(shell: &str, script: &str, stdin: &[u8], home: &Path) -> Run {
     }
 }
 
+/// Runs `script` in a fresh hidden console at the system's OEM code page: the
+/// test process's console is already at UTF-8 output, and an SSH session's
+/// console is not.
+#[cfg(windows)]
+fn run_in_own_console(shell: &str, script: &str, home: &Path) -> Run {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = Command::new(shell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+        ])
+        .arg(encode(script))
+        .env("USERPROFILE", home)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    Run {
+        code: output.status.code(),
+        stdout: output.stdout,
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
 #[track_caller]
 fn assert_code(run: &Run, code: i32) {
     assert_eq!(run.code, Some(code), "stderr: {}", run.stderr);
@@ -587,6 +614,41 @@ fn powershell_scripts_probe_and_archive_folders() {
             home: tempfile::tempdir().unwrap(),
         };
         archives(&archive);
+    }
+}
+
+/// The probe's answer reaches the client as UTF-8 whatever the console's code
+/// page, so a non-ASCII folder name comes back exactly.
+#[test]
+fn powershell_probe_round_trips_non_ascii_folder_names() {
+    let shells = shells();
+    if shells.is_empty() {
+        eprintln!("skipped: no PowerShell on this machine");
+        return;
+    }
+    for shell in shells {
+        eprintln!("running under {shell}");
+        let fixture = Fixture {
+            shell,
+            home: tempfile::tempdir().unwrap(),
+        };
+        for tree in ["café", "資料"] {
+            std::fs::create_dir(fixture.path(tree)).unwrap();
+            std::fs::write(fixture.path(&format!("{tree}/{tree}.txt")), b"alpha").unwrap();
+            #[cfg(windows)]
+            let probed = if shell == "powershell.exe" {
+                let script = scripts::powershell_probe_script(&fixture.text(tree));
+                run_in_own_console(shell, &script, fixture.home.path())
+            } else {
+                fixture.probe(&fixture.text(tree))
+            };
+            #[cfg(not(windows))]
+            let probed = fixture.probe(&fixture.text(tree));
+            assert_code(&probed, 0);
+            let probed = parse_probe_output(&probed.stdout).unwrap();
+            assert_eq!(probed.top, tree, "{shell}");
+            assert_eq!(probed.bytes, 1024, "{shell}");
+        }
     }
 }
 

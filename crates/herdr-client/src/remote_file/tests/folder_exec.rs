@@ -171,6 +171,85 @@ fn archive_streams_the_tree_as_a_gzipped_tar() {
     );
 }
 
+/// The file entries of a gzipped tar, sorted, and its symlink entries.
+fn tar_entries(bytes: Vec<u8>) -> (Vec<String>, Vec<String>) {
+    let mut archive = tar::Archive::new(GzDecoder::new(Cursor::new(bytes)));
+    let mut files = Vec::new();
+    let mut links = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().into_owned();
+        if entry.header().entry_type().is_file() {
+            files.push(path);
+        } else if entry.header().entry_type().is_symlink() {
+            links.push(path);
+        }
+    }
+    files.sort();
+    (files, links)
+}
+
+#[test]
+fn probe_and_archive_follow_a_link_to_the_folder() {
+    let fixture = Fixture::new();
+    std::fs::create_dir_all(fixture.path("tree/nested")).unwrap();
+    std::fs::write(fixture.path("tree/a.txt"), b"alpha").unwrap();
+    std::fs::write(fixture.path("tree/nested/b.bin"), payload(4096)).unwrap();
+    std::os::unix::fs::symlink("tree", fixture.path("link")).unwrap();
+
+    let tree = fixture.probe(&fixture.text("tree")).unwrap();
+    let link = fixture.probe(&fixture.text("link")).unwrap();
+    assert_eq!(link, tree);
+    assert_eq!(link.top, "tree");
+    let trailing = fixture
+        .probe(&format!("{}/", fixture.text("link")))
+        .unwrap();
+    assert_eq!(trailing, tree);
+
+    let (bytes, _) = fixture
+        .archive(&fixture.text("link"), MAX_REMOTE_FILE_BYTES)
+        .unwrap();
+    let (files, links) = tar_entries(bytes);
+    assert_eq!(files, ["tree/a.txt", "tree/nested/b.bin"]);
+    assert!(links.is_empty(), "{links:?}");
+}
+
+#[test]
+fn probe_and_archive_refuse_a_link_to_the_root() {
+    let fixture = Fixture::new();
+    std::os::unix::fs::symlink("/", fixture.path("root")).unwrap();
+    assert!(matches!(fixture.probe("/"), Err(Error::NotAFolder)));
+    assert!(matches!(
+        fixture.probe(&fixture.text("root")),
+        Err(Error::NotAFolder)
+    ));
+    assert!(matches!(
+        fixture.archive(&fixture.text("root"), MAX_REMOTE_FILE_BYTES),
+        Err(Error::NotAFile)
+    ));
+}
+
+#[test]
+fn probe_and_archive_leave_a_link_inside_the_tree_unfollowed() {
+    let fixture = Fixture::new();
+    std::fs::create_dir_all(fixture.path("tree")).unwrap();
+    std::fs::write(fixture.path("tree/a.txt"), b"alpha").unwrap();
+    std::fs::create_dir_all(fixture.path("other")).unwrap();
+    std::fs::write(fixture.path("other/big.bin"), payload(512 * 1024)).unwrap();
+    std::os::unix::fs::symlink("../other", fixture.path("tree/inner")).unwrap();
+
+    let probed = fixture.probe(&fixture.text("tree")).unwrap();
+    assert!(probed.bytes < 512 * 1024, "{probed:?}");
+    assert_eq!(probed.links_skipped, 0);
+
+    let (bytes, _) = fixture
+        .archive(&fixture.text("tree"), MAX_REMOTE_FILE_BYTES)
+        .unwrap();
+    let (files, links) = tar_entries(bytes);
+    assert_eq!(files, ["tree/a.txt"]);
+    assert_eq!(links, ["tree/inner"]);
+}
+
 #[test]
 fn archive_refuses_the_root_a_file_and_a_missing_path() {
     let fixture = Fixture::new();

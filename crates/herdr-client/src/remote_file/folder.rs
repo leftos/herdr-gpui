@@ -21,8 +21,8 @@ pub(super) fn posix_probe_script(path: &str) -> String {
         r#"{assign}
 if [ ! -e "$path" ]; then exit {MISSING_EXIT}; fi
 if [ ! -d "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
-while [ "${{path%/}}" != "$path" ]; do path=${{path%/}}; done
-if [ -z "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
+path=$(CDPATH= cd -P -- "$path" && pwd -P) || exit {NOT_A_FILE_EXIT}
+if [ "$path" = / ]; then exit {NOT_A_FILE_EXIT}; fi
 top=${{path##*/}}
 size=$(du -sk -- "$path" 2>/dev/null | cut -f1) || exit 1
 case $size in ''|*[!0-9]*) exit 1 ;; esac
@@ -49,17 +49,18 @@ printf '%s\n' 0"#,
 }
 
 /// The `/bin/sh` script that streams the folder as a gzipped tar whose entries
-/// start with the folder's name. `/` is refused: extracting it would replace
-/// the host's whole tree.
+/// start with the folder's name. Both POSIX scripts resolve a link to the
+/// folder to its physical path first, so the archive holds the target's tree
+/// rather than the link, while links inside the tree stay links. `/`, or a
+/// link to it, is refused: extracting it would replace the host's whole tree.
 pub(super) fn posix_archive_script(path: &str) -> String {
     format!(
         r#"{assign}
 if [ ! -e "$path" ]; then exit {MISSING_EXIT}; fi
 if [ ! -d "$path" ]; then exit {NOT_A_FILE_EXIT}; fi
+path=$(CDPATH= cd -P -- "$path" && pwd -P) || exit {NOT_A_FILE_EXIT}
 if [ "$path" = / ]; then exit {NOT_A_FILE_EXIT}; fi
-while [ "${{path%/}}" != "$path" ]; do path=${{path%/}}; done
 dir=${{path%/*}}; base=${{path##*/}}
-if [ -z "$base" ]; then exit {NOT_A_FILE_EXIT}; fi
 if [ -z "$dir" ]; then dir=/; fi
 exec tar -czf - -C "$dir" -- "$base""#,
         assign = path_assignment(path),
@@ -70,7 +71,9 @@ exec tar -czf - -C "$dir" -- "$base""#,
 /// its sorted metadata listing, the name its archive's entries start with, and
 /// the number of reparse points it skipped. Directories are walked with an
 /// explicit stack because `Get-ChildItem -Recurse` follows junctions on
-/// Windows PowerShell 5.1; reparse points are skipped here.
+/// Windows PowerShell 5.1; reparse points are skipped here. The answer is
+/// written to stdout as UTF-8 bytes, since `Write-Output` encodes with the
+/// console's code page and would garble a non-ASCII folder name.
 pub(super) fn powershell_probe_script(path: &str) -> String {
     format!(
         r#"{PREAMBLE}
@@ -130,10 +133,12 @@ try {{
 }} finally {{
     $sha.Dispose()
 }}
-Write-Output ([long][Math]::Ceiling([double]$total / 1024))
-Write-Output $digest
-Write-Output $base
-Write-Output ([long]$skipped)"#,
+$kib = [long][Math]::Ceiling([double]$total / 1024)
+$answer = [string]::Join("`n", @($kib.ToString(), $digest, $base, ([long]$skipped).ToString())) + "`n"
+$answerBytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($answer)
+$stdout = [Console]::OpenStandardOutput()
+$stdout.Write($answerBytes, 0, $answerBytes.Length)
+$stdout.Flush()"#,
         path = path_expression(path),
     )
 }
