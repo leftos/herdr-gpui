@@ -26,6 +26,8 @@ pub enum Error {
     InvalidDeviceId(String),
     #[error("devices and each devices.<id> must be tables")]
     InvalidDevicesTable,
+    #[error("remote_files.folder_transfer_cap_mb must be between 1 and 8192")]
+    InvalidFolderTransferCap,
     #[error("{0}.size must be finite and between 8 and 48 logical pixels")]
     InvalidFontSize(&'static str),
     #[error("{0}.weight must be a weight name such as \"medium\" or a number from 100 to 900")]

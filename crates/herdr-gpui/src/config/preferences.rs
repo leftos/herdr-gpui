@@ -41,8 +41,6 @@ pub(crate) enum Preference {
     NotificationPosition(Option<ToastHerdrPosition>),
     /// `[notifications] finished`: GUI-only, so there is no shared value to follow.
     NotificationFinished(bool),
-    /// `[remote_files] folder_warning_mb`, in megabytes.
-    FolderWarningMb(u32),
     /// `[remote_files] folder_transfer_cap_mb`, in megabytes.
     FolderTransferCapMb(u32),
     ClipboardEnabled(Option<bool>),
@@ -116,10 +114,6 @@ impl Config {
                 Err(error) => return Err(error.into()),
             };
             let mut document = text.parse::<toml_edit::DocumentMut>()?;
-            let folder_sizes = matches!(
-                &edit,
-                Preference::FolderWarningMb(_) | Preference::FolderTransferCapMb(_)
-            );
             let (table, key, value) = match edit {
                 Preference::AgentsPlacement(placement) => {
                     (None, "agents_placement", Some(placement.as_str().into()))
@@ -211,23 +205,9 @@ impl Config {
                 Preference::NotificationFinished(value) => {
                     (Some("notifications"), "finished", Some(value.into()))
                 }
-                Preference::FolderWarningMb(value) => {
-                    if !(1..=4096).contains(&value) {
-                        return Err(Error::Toml(serde::de::Error::custom(
-                            "remote_files.folder_warning_mb must be between 1 and 4096",
-                        )));
-                    }
-                    (
-                        Some("remote_files"),
-                        "folder_warning_mb",
-                        Some(i64::from(value).into()),
-                    )
-                }
                 Preference::FolderTransferCapMb(value) => {
                     if !(1..=8192).contains(&value) {
-                        return Err(Error::Toml(serde::de::Error::custom(
-                            "remote_files.folder_transfer_cap_mb must be between 1 and 8192",
-                        )));
+                        return Err(Error::InvalidFolderTransferCap.into());
                     }
                     (
                         Some("remote_files"),
@@ -386,11 +366,6 @@ impl Config {
                 target.insert(key, toml_edit::Item::Value(value));
             } else {
                 target.remove(key);
-            }
-            // A folder size lands only when the pair still makes sense, so the
-            // whole file is read back before it is written.
-            if folder_sizes {
-                Config::parse_over(&document.to_string(), &Daemon::default())?;
             }
             write_config(path, &document.to_string())
         })();
