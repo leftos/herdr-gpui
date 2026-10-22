@@ -16,6 +16,7 @@
 
 mod cache;
 mod push;
+mod raw_join;
 mod sync;
 mod uploads;
 mod watch;
@@ -35,6 +36,7 @@ use std::{
 };
 
 pub(crate) use cache::{Cache, basename};
+pub(crate) use raw_join::RawJoin;
 pub(crate) use sync::{Answer, Policy, Resolution, SyncState};
 
 /// Bytes in the megabyte that [`Error::TooLarge`] reports.
@@ -233,16 +235,11 @@ pub(crate) struct Missing {
     pub(crate) query: Option<String>,
     /// The working directory a relative path typed in its place is under.
     pub(crate) cwd: Option<String>,
-    /// The path the question offers to edit: the first row's own path when
-    /// a raw wrap joined the next row's text to the click's, else the
-    /// click's.
-    pub(crate) prefill: String,
 }
 
 /// What a click asked for besides the host's file.
 struct Click {
     query: Option<String>,
-    unjoined: Option<RemotePath>,
     cwd: Option<String>,
 }
 
@@ -276,6 +273,9 @@ pub(crate) struct RemoteFiles {
     /// The folder of the cache this window's copies are in.
     owner: Owner,
     prompts: VecDeque<Prompt>,
+    /// Clicks whose path a raw wrap ran onto the next row, waiting to ask
+    /// which path to open.
+    raw_joins: VecDeque<RawJoin>,
     /// Whether a watch run is underway.
     watching: bool,
 }
@@ -752,9 +752,10 @@ impl HerdrWindow {
     /// A copy in conflict is reopened, and its question asked again. A page
     /// opens with `query`, the `?query` or `#fragment` printed after its path.
     /// `unjoined` is the path the first row reads alone, where a raw wrap
-    /// joined the next row's text to `remote`. A file the host does not have
-    /// queues the question that offers that path, or `remote`'s, to edit;
-    /// a relative path typed there is under `cwd`.
+    /// joined the next row's text to `remote`: such a click fetches nothing
+    /// and queues the question of which path to open. A file the host does
+    /// not have queues the question that offers its path to edit; a relative
+    /// path typed in either is under `cwd`.
     pub(crate) fn open_remote_file(
         &mut self,
         remote: RemotePath,
@@ -763,6 +764,16 @@ impl HerdrWindow {
         cwd: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if let Some(unjoined) = unjoined {
+            let join = RawJoin {
+                remote,
+                query,
+                unjoined,
+                cwd,
+            };
+            self.ask_raw_join(join, cx);
+            return;
+        }
         if !self.remote_files.fetch_again(&remote) {
             let shown = self.shown_remote_file_prompt();
             let key = (remote.target.clone(), remote.path.clone());
@@ -793,11 +804,7 @@ impl HerdrWindow {
         let fetch = cx
             .background_executor()
             .spawn(async move { fetch_copy(&io, owner, &asked, synced, page_query.as_deref()) });
-        let click = Click {
-            query,
-            unjoined,
-            cwd,
-        };
+        let click = Click { query, cwd };
         cx.spawn(async move |this, cx| {
             let fetched = fetch.await;
             // The window may have closed meanwhile; nothing opens then.
@@ -836,14 +843,10 @@ impl HerdrWindow {
             // The poll opens the question once no page holds the window.
             Err(error) if error.is_missing() => {
                 tracing::info!(target = %remote.target, "Remote file not on the host; asking for another path");
-                let prefill = click
-                    .unjoined
-                    .map_or_else(|| remote.path.clone(), |unjoined| unjoined.path);
                 self.remote_files.missing.push_back(Missing {
                     remote,
                     query: click.query,
                     cwd: click.cwd,
-                    prefill,
                 });
                 cx.notify();
             }

@@ -34,17 +34,29 @@ impl HerdrWindow {
         if self.menu.page.is_some() || !self.open_menu(window, cx) {
             return false;
         }
-        let input = cx.new(SearchInput::new);
-        input.update(cx, |input, cx| {
-            input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
-            input.set_placeholder("Path on the host", cx);
-            input.set_text_selected(&missing.prefill, cx);
-            window.focus(&input.focus, cx);
-        });
+        let input = self.remote_path_field(&missing.remote.path, window, cx);
         self.menu.remote_missing = Some(MissingDialog { missing, input });
         self.menu.page = Some(Page::RemoteMissing);
         cx.notify();
         true
+    }
+
+    /// A focused field for a path on the host, holding `text` all selected
+    /// so typing replaces it.
+    pub(in crate::menu) fn remote_path_field(
+        &self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SearchInput> {
+        let input = cx.new(SearchInput::new);
+        input.update(cx, |input, cx| {
+            input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
+            input.set_placeholder("Path on the host", cx);
+            input.set_text_selected(text, cx);
+            window.focus(&input.focus, cx);
+        });
+        input
     }
 
     /// Whether `event` belongs to the not-on-host question's field, which
@@ -72,26 +84,18 @@ impl HerdrWindow {
         self.open_remote_file(remote, query, None, cwd, cx);
     }
 
-    /// The file the field names, the query it opens with, and the working
-    /// directory it was resolved under. The click's query and line stay only
-    /// while the field still holds the clicked path.
     fn remote_missing_choice(
         &self,
         cx: &App,
     ) -> Option<(RemotePath, Option<String>, Option<String>)> {
         let dialog = self.menu.remote_missing.as_ref()?;
-        let input = dialog.input.read(cx);
-        let text = input.text().trim();
-        if input.is_composing() || text.is_empty() {
-            return None;
-        }
         let missing = &dialog.missing;
-        let cwd = missing.cwd.clone();
-        if text == missing.remote.path {
-            return Some((missing.remote.clone(), missing.query.clone(), cwd));
-        }
-        let remote = RemotePath::typed(&missing.remote.target, text, cwd.as_deref())?;
-        Some((remote, None, cwd))
+        typed_choice(
+            dialog.input.read(cx),
+            &missing.remote,
+            missing.query.as_deref(),
+            missing.cwd.as_deref(),
+        )
     }
 
     /// The path the not-on-host question's field holds, while it is open.
@@ -308,7 +312,7 @@ impl HerdrWindow {
             )
     }
 
-    fn remote_file_button(
+    pub(in crate::menu) fn remote_file_button(
         &self,
         id: &'static str,
         label: &'static str,
@@ -355,17 +359,40 @@ impl HerdrWindow {
     }
 }
 
-fn title(text: String) -> Div {
+/// The file a path field names for the clicked file `clicked`, the query it
+/// opens with, and the working directory it was resolved under. The click's
+/// `query` and line stay only while the field still holds the clicked path.
+/// An empty field, one mid-composition, or a relative path with no `cwd` to
+/// put it under names none.
+pub(super) fn typed_choice(
+    input: &SearchInput,
+    clicked: &RemotePath,
+    query: Option<&str>,
+    cwd: Option<&str>,
+) -> Option<(RemotePath, Option<String>, Option<String>)> {
+    let text = input.text().trim();
+    if input.is_composing() || text.is_empty() {
+        return None;
+    }
+    let cwd = cwd.map(str::to_owned);
+    if text == clicked.path {
+        return Some((clicked.clone(), query.map(str::to_owned), cwd));
+    }
+    let remote = RemotePath::typed(&clicked.target, clicked.shell, text, cwd.as_deref())?;
+    Some((remote, None, cwd))
+}
+
+pub(super) fn title(text: String) -> Div {
     div()
         .p(px(8.))
         .font_weight(FontWeight::SEMIBOLD)
         .child(text)
 }
 
-fn muted(color: u32, text: &'static str) -> Div {
+pub(super) fn muted(color: u32, text: &'static str) -> Div {
     div().p(px(8.)).text_color(rgb(color)).child(text)
 }
 
-fn buttons() -> Div {
+pub(super) fn buttons() -> Div {
     div().flex().flex_wrap().gap(px(8.)).p(px(8.))
 }

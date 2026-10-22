@@ -46,6 +46,9 @@ impl HerdrWindow {
             return;
         }
         let Some(prompt) = self.remote_files.next_prompt() else {
+            if self.show_next_raw_join(window, cx) {
+                return;
+            }
             if let Some(missing) = self.remote_files.missing.front().cloned()
                 && self.show_remote_missing(missing, window, cx)
             {

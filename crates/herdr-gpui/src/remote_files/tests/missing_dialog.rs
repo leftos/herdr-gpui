@@ -8,67 +8,11 @@ const PATH: &str = "/home/me/gone.md";
 const CWD: &str = "/home/me/src";
 const PAGE: &str = "/srv/www/gone.html";
 
-fn posix(path: &str) -> RemotePath {
-    RemotePath {
-        target: "me@devbox".into(),
-        shell: RemoteShell::Posix,
-        path: path.into(),
-        line: None,
-    }
-}
-
 /// A host that is reached but cuts the transfer short.
 fn cut_short() -> herdr_client::Result<&'static [u8]> {
     Err(herdr_client::Error::RemoteFile(
         herdr_client::RemoteFileError::Incomplete,
     ))
-}
-
-/// A window whose host has none of the files asked for.
-fn on_empty_host<'a>(
-    host: &FakeHost,
-    cx: &'a mut TestAppContext,
-) -> (Entity<HerdrWindow>, &'a mut VisualTestContext) {
-    let (view, cx) = window(host, cx);
-    view.update(cx, |view, _| host.serve(&mut view.remote_files, missing));
-    (view, cx)
-}
-
-/// A click on `remote`, its fetch finished, and the poll that opens a
-/// waiting question.
-fn click(
-    view: &Entity<HerdrWindow>,
-    cx: &mut VisualTestContext,
-    remote: RemotePath,
-    unjoined: Option<RemotePath>,
-    cwd: Option<&str>,
-) {
-    let cwd = cwd.map(str::to_owned);
-    view.update(cx, |view, cx| {
-        view.open_remote_file(remote, None, unjoined, cwd, cx)
-    });
-    poll(view, cx);
-}
-
-fn poll(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) {
-    cx.run_until_parked();
-    view.update_in(cx, |view, window, cx| view.poll_remote_files(window, cx));
-    cx.run_until_parked();
-}
-
-fn page(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<Page> {
-    view.read_with(cx, |view, _| view.menu.page)
-}
-
-fn field(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<String> {
-    view.read_with(cx, |view, cx| view.remote_missing_text(cx))
-}
-
-/// Types `text` over the field's selected path, and presses Enter.
-fn open(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, text: &str) {
-    cx.simulate_input(text);
-    cx.simulate_keystrokes("enter");
-    poll(view, cx);
 }
 
 #[gpui::test]
@@ -88,17 +32,6 @@ fn a_missing_file_asks_for_a_path_holding_the_clicked_one(cx: &mut TestAppContex
             "no failure flash"
         );
     });
-}
-
-#[gpui::test]
-fn a_missing_joined_path_offers_the_first_row_s_part(cx: &mut TestAppContext) {
-    let host = FakeHost::new();
-    let (view, cx) = on_empty_host(&host, cx);
-    let joined = posix("/home/me/gone.mdnext-row.txt");
-    click(&view, cx, joined.clone(), Some(posix(PATH)), Some(CWD));
-    assert_eq!(host.asked(), vec![joined]);
-    assert_eq!(page(&view, cx), Some(Page::RemoteMissing));
-    assert_eq!(field(&view, cx).as_deref(), Some(PATH));
 }
 
 #[gpui::test]
@@ -137,6 +70,25 @@ fn escape_closes_the_question_without_a_fetch(cx: &mut TestAppContext) {
     assert_eq!(page(&view, cx), None);
     assert_eq!(field(&view, cx), None);
     assert_eq!(host.asked().len(), 1);
+}
+
+#[gpui::test]
+fn an_edited_home_path_keeps_the_windows_host_s_shell(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = on_empty_host(&host, cx);
+    click(&view, cx, remote(r"C:\dev\notes.md"), None, None);
+    assert_eq!(page(&view, cx), Some(Page::RemoteMissing));
+    open(&view, cx, "~/notes.md");
+    assert_eq!(host.asked()[1], remote(r"~\notes.md"));
+}
+
+#[gpui::test]
+fn an_edited_posix_form_path_is_read_in_the_windows_host_s_shell(cx: &mut TestAppContext) {
+    let host = FakeHost::new();
+    let (view, cx) = on_empty_host(&host, cx);
+    click(&view, cx, remote(r"C:\dev\notes.md"), None, None);
+    open(&view, cx, "/srv/notes.md");
+    assert_eq!(host.asked()[1], remote(r"\srv\notes.md"));
 }
 
 #[gpui::test]

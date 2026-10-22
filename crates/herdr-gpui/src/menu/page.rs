@@ -76,6 +76,9 @@ pub(crate) enum Page {
     /// A remote file's host changed since its copy was synced, so a save
     /// was not uploaded.
     RemoteConflict,
+    /// An SSH path click whose path a raw wrap ran onto the next row; asks
+    /// which path to open before anything is fetched.
+    RemoteJoin,
     /// A file an SSH path click asked for is not on the host; offers the
     /// path to edit and open again.
     RemoteMissing,

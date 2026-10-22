@@ -48,11 +48,17 @@ impl RemotePath {
         })
     }
 
-    /// The host's file a path typed for `target` names, resolved under `cwd`
-    /// as a printed path is. `None` when it names none, as a relative path
-    /// does with no absolute `cwd`.
-    pub(crate) fn typed(target: &str, path: &str, cwd: Option<&str>) -> Option<Self> {
-        let (shell, path) = resolve(path, cwd)?;
+    /// The host's file a path typed for `target`, whose host reads paths in
+    /// `shell`, names. Every typed path is read in `shell`, a relative one
+    /// under `cwd`. `None` when it names none, as a relative path does with
+    /// no `cwd` absolute in `shell`'s form.
+    pub(crate) fn typed(
+        target: &str,
+        shell: RemoteShell,
+        path: &str,
+        cwd: Option<&str>,
+    ) -> Option<Self> {
+        let (shell, path) = resolve_typed(shell, path, cwd)?;
         Some(Self {
             target: target.to_owned(),
             shell,
@@ -82,35 +88,100 @@ fn resolve(path: &str, cwd: Option<&str>) -> Option<(RemoteShell, String)> {
     }
     let cwd = cwd.map(file_url_drive);
     if let Some(rest) = path.strip_prefix('~') {
-        // `~user` names another account's home, which is not resolved.
-        if !(rest.is_empty() || rest.starts_with(['/', '\\'])) {
-            return None;
-        }
         let powershell = cwd.map_or(rest.starts_with('\\'), windows);
-        return Some(if powershell {
-            (RemoteShell::PowerShell, backslashes(path))
+        let shell = if powershell {
+            RemoteShell::PowerShell
         } else {
-            (RemoteShell::Posix, path.to_owned())
-        });
+            RemoteShell::Posix
+        };
+        return home(shell, path);
     }
-    // Empty, or relative to the root of a drive no cwd names.
+    let shell = if cwd.is_some_and(windows) {
+        RemoteShell::PowerShell
+    } else {
+        RemoteShell::Posix
+    };
+    under(shell, path, cwd?)
+}
+
+/// The shell and path for `path` as typed for a host that reads paths in
+/// `shell`. PowerShell reads every absolute form, with backslashes so it is
+/// keyed as a clicked PowerShell path is; a path rooted without a drive
+/// takes the drive of a drive `cwd`. A POSIX host reads no drive or UNC
+/// path, so one names no file there.
+fn resolve_typed(
+    shell: RemoteShell,
+    path: &str,
+    cwd: Option<&str>,
+) -> Option<(RemoteShell, String)> {
+    if path.starts_with('~') {
+        return home(shell, path);
+    }
+    match shell {
+        RemoteShell::PowerShell => {
+            let path = file_url_drive(path);
+            let cwd = cwd.map(file_url_drive);
+            if windows(path) {
+                return Some((shell, backslashes(path)));
+            }
+            if path.starts_with(['/', '\\']) {
+                let drive = cwd.and_then(drive).unwrap_or_default();
+                return Some((shell, format!("{drive}{}", backslashes(path))));
+            }
+            under(shell, path, cwd?)
+        }
+        RemoteShell::Posix => {
+            if windows(path) {
+                return None;
+            }
+            if path.starts_with('/') {
+                return Some((shell, path.to_owned()));
+            }
+            under(shell, path, cwd?)
+        }
+    }
+}
+
+/// The `X:` drive a drive path such as `X:\dev` starts with.
+fn drive(path: &str) -> Option<&str> {
+    let drive = path.get(..2)?;
+    (windows(path) && !path.starts_with('\\')).then_some(drive)
+}
+
+/// `path`, which starts with `~`, in `shell`'s form: a POSIX host expands
+/// only a leading `~/`, so `~\` is read as `~/` there. `~user` names
+/// another account's home, which is not resolved.
+fn home(shell: RemoteShell, path: &str) -> Option<(RemoteShell, String)> {
+    let rest = path.strip_prefix('~')?;
+    if !(rest.is_empty() || rest.starts_with(['/', '\\'])) {
+        return None;
+    }
+    Some(match shell {
+        RemoteShell::PowerShell => (shell, backslashes(path)),
+        RemoteShell::Posix if rest.starts_with('\\') => (shell, path.replace('\\', "/")),
+        RemoteShell::Posix => (shell, path.to_owned()),
+    })
+}
+
+/// The relative `path` under `cwd`, joined in `shell`'s form. `None` when
+/// `path` is empty or relative to the root of a drive no cwd names, or when
+/// `cwd` is not absolute in `shell`'s form.
+fn under(shell: RemoteShell, path: &str, cwd: &str) -> Option<(RemoteShell, String)> {
     if path.is_empty() || path.starts_with('\\') {
         return None;
     }
     let relative = without_current(path);
-    let cwd = cwd?;
-    if windows(cwd) {
-        let cwd = backslashes(cwd);
-        let folder = cwd.trim_end_matches('\\');
-        Some((
-            RemoteShell::PowerShell,
-            format!("{folder}\\{}", backslashes(relative)),
-        ))
-    } else if cwd.starts_with('/') {
-        let folder = cwd.trim_end_matches('/');
-        Some((RemoteShell::Posix, format!("{folder}/{relative}")))
-    } else {
-        None
+    match shell {
+        RemoteShell::PowerShell if windows(cwd) => {
+            let cwd = backslashes(cwd);
+            let folder = cwd.trim_end_matches('\\');
+            Some((shell, format!("{folder}\\{}", backslashes(relative))))
+        }
+        RemoteShell::Posix if cwd.starts_with('/') => {
+            let folder = cwd.trim_end_matches('/');
+            Some((shell, format!("{folder}/{relative}")))
+        }
+        _ => None,
     }
 }
 

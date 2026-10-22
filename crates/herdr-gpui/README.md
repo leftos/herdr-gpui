@@ -2310,12 +2310,26 @@ holding the copy. Windows OpenSSH hosts are reached through Windows PowerShell
 5.1 or later, and other hosts through `/bin/sh`. Files up to 64 MB are fetched;
 a folder or a larger file shows why nothing opened.
 
-When the host has no file at the clicked path, a dialog shows the path in an
-editable field. If the click read a path across a raw wrap, the field holds the
-first row's part instead. **Open** fetches what the field holds, resolving a
-relative path under the pane's working directory, and asks again if that path is
-missing too. The click's query, fragment or line is kept only while the field is
-unchanged. **Cancel** or Escape opens nothing.
+When a path ran onto a second line and its first line alone reads as a
+different path, the click asks before fetching anything, even for a path whose
+copy is already cached. The dialog "Open from {target}?" says the path ran onto
+a second line, which may be other output, and holds the joined path in an
+editable field. **Open** (Enter) fetches what the field holds, **First line
+only** puts the first line's part in the field without opening, and **Cancel**
+or Escape opens nothing. The click's query, fragment or line is kept only while
+the field holds the joined path.
+
+When the host has no file at the clicked path, a dialog shows the path that was
+asked for in an editable field. **Open** fetches what the field holds,
+resolving a relative path under the pane's working directory, and asks again if
+that path is missing too. The click's query, fragment or line is kept only
+while the field is unchanged. **Cancel** or Escape opens nothing.
+
+In both dialogs a typed path is read in the clicked host's own shell. On a
+Windows host an edited `~/notes.md` is fetched as `~\notes.md`, and `/srv/x.md`
+as `\srv\x.md` on the drive of the pane's working directory. On a POSIX host
+`~\notes.md` is fetched as `~/notes.md`, and **Open** does nothing for a drive
+or UNC path.
 
 The copy is watched for saves. The first save asks whether to upload it:
 **Upload**, **Upload future saves without asking**, or **Not now**. Each
