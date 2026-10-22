@@ -72,6 +72,9 @@ pub(crate) enum Page {
     RemoteConflict,
     /// A remote folder is large or changed, and its copy asks what to do.
     RemoteFolder,
+    /// A file an SSH path click asked for is not on the host; offers the
+    /// path to edit and open again.
+    RemoteMissing,
     /// Asks before a save to a remote file's copy is uploaded.
     RemoteUpload,
     RemoveDevice,

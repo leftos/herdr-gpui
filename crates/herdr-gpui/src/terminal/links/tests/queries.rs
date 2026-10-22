@@ -140,6 +140,7 @@ fn a_query_wrapped_raw_onto_the_next_row_joins_its_path() {
             line: None,
             query: Some("?sheet=1".into()),
             explicit: false,
+            unjoined: None,
         }
     );
     assert_eq!(link.rows, vec![(0, 4..24), (1, 0..5)]);
@@ -207,6 +208,7 @@ fn a_file_address_keeps_its_query_and_fragment_in_text_and_hyperlinks() {
         line: None,
         query: Some("?sheet=1#top".into()),
         explicit,
+        unjoined: None,
     };
     let text = format!("open {address} ok");
     let plain = frame_link(&frame(&text, 60, 1), 6, 0, 0, 60).unwrap();
@@ -228,6 +230,7 @@ fn a_file_address_keeps_its_query_and_fragment_in_text_and_hyperlinks() {
             line: None,
             query: Some("?x=1".into()),
             explicit: true,
+            unjoined: None,
         })
     );
     // A query longer than an address may carry is refused.
@@ -252,6 +255,7 @@ fn a_file_address_or_hyperlink_takes_its_line_from_the_fragment() {
         line: Some(10),
         query: Some("#L10".into()),
         explicit,
+        unjoined: None,
     };
     let text = format!("open {address} ok");
     let plain = frame_link(&frame(&text, 60, 1), 6, 0, 0, 60).unwrap();
@@ -271,6 +275,7 @@ fn a_file_address_or_hyperlink_takes_its_line_from_the_fragment() {
             line: Some(10),
             query: Some("#L10-L20".into()),
             explicit: true,
+            unjoined: None,
         })
     );
 }

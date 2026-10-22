@@ -26,6 +26,7 @@ fn paths_resolve_under_home_or_the_pane_directory() {
         cwd: cwd.map(|cwd| cwd.to_str().unwrap().into()),
         explicit: false,
         remote: None,
+        unjoined: None,
     };
     assert_eq!(
         link("~/notes/a.md", None).resolve(Some(home)),

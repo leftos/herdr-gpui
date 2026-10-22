@@ -98,7 +98,9 @@ fn tar_gz_with_link() -> Vec<u8> {
 
 /// A click on `path` in a pane on the fake host, and the work it starts.
 fn click(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) {
-    view.update(cx, |view, cx| view.open_remote_file(remote(path), None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(remote(path), None, None, None, cx)
+    });
     cx.run_until_parked();
 }
 
@@ -348,7 +350,9 @@ fn links_the_extraction_skipped_are_counted_and_flashed(cx: &mut TestAppContext)
         path: PATH.into(),
         line: None,
     };
-    view.update(cx, |view, cx| view.open_remote_file(posix, None, cx));
+    view.update(cx, |view, cx| {
+        view.open_remote_file(posix, None, None, None, cx)
+    });
     cx.run_until_parked();
     let text = flash_text(&view, cx).expect("the skipped link is reported");
     assert_eq!(text, "1 link was skipped");

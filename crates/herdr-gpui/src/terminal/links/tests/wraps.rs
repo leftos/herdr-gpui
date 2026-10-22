@@ -36,8 +36,31 @@ fn file(path: &str, line: Option<u32>, rows: &[(u16, Range<u16>)]) -> Option<(Ro
         line,
         query: None,
         explicit: false,
+        unjoined: None,
     };
     Some((target, rows.to_vec()))
+}
+
+/// A path a raw wrap joined, with the path its first row reads alone.
+fn joined_file(
+    path: &str,
+    line: Option<u32>,
+    first: &str,
+    rows: &[(u16, Range<u16>)],
+) -> Option<(RowTarget, Rows)> {
+    let mut found = file(path, line, rows);
+    if let Some((RowTarget::Path { unjoined, .. }, _)) = &mut found {
+        *unjoined = Some(first.into());
+    }
+    found
+}
+
+/// The path the first row of the path read at a cell reads alone.
+fn unjoined(frame: &FrameData, column: u16, row: u16) -> Option<String> {
+    match read(frame, column, row) {
+        Some((RowTarget::Path { unjoined, .. }, _)) => unjoined,
+        other => panic!("no path: {other:?}"),
+    }
 }
 
 #[test]
@@ -51,7 +74,12 @@ fn a_raw_wrap_joins_an_address_read_from_either_row() {
 #[test]
 fn a_raw_wrap_joins_a_path_and_its_location() {
     let wrapped = rows(&["build src/very/long/", "file.rs:12 ok"], 20);
-    let expected = file("src/very/long/file.rs", Some(12), &[(0, 6..20), (1, 0..10)]);
+    let expected = joined_file(
+        "src/very/long/file.rs",
+        Some(12),
+        "src/very/long/",
+        &[(0, 6..20), (1, 0..10)],
+    );
     assert_eq!(read(&wrapped, 8, 0), expected);
     // A daemon that resolves links reads no paths, so they join anyway.
     assert_eq!(read_resolved(&wrapped, 8, 0), expected);
@@ -90,8 +118,49 @@ fn a_wide_glyph_that_did_not_fit_continues_on_the_next_row() {
     wrapped.cells[21].skip = true;
     assert_eq!(
         read(&wrapped, 5, 0),
-        file("src/aaaaaaaaaaaa界.rs", None, &[(0, 3..19), (1, 0..5)])
+        joined_file(
+            "src/aaaaaaaaaaaa界.rs",
+            None,
+            "src/aaaaaaaaaaaa",
+            &[(0, 3..19), (1, 0..5)]
+        )
     );
+}
+
+#[test]
+fn a_path_a_raw_wrap_joined_keeps_what_its_first_row_reads() {
+    // `abc.txt` may have ended at the pane's edge, over a line of its own.
+    let wrapped = rows(&["/srv/project/abc.txt", "other.txt ok"], 20);
+    assert_eq!(
+        read(&wrapped, 3, 0),
+        joined_file(
+            "/srv/project/abc.txtother.txt",
+            None,
+            "/srv/project/abc.txt",
+            &[(0, 0..20), (1, 0..9)]
+        )
+    );
+    assert_eq!(
+        unjoined(&wrapped, 3, 1),
+        Some("/srv/project/abc.txt".into())
+    );
+}
+
+#[test]
+fn a_path_joined_only_inside_its_location_reads_the_same_on_its_first_row() {
+    let wrapped = rows(&["see /srv/proj/a.rs:1", "2 ok"], 20);
+    assert_eq!(
+        read(&wrapped, 6, 0),
+        file("/srv/proj/a.rs", Some(12), &[(0, 4..20), (1, 0..1)])
+    );
+}
+
+#[test]
+fn a_path_an_application_wrapped_or_not_joined_has_no_first_row_reading() {
+    let result = rows(&["  ⎿  /home/u/pj/src/", "     deep/file.rs"], 20);
+    assert_eq!(unjoined(&result, 7, 0), None);
+    let apart = rows(&["see /srv/a.txt", "other.txt ok"], 20);
+    assert_eq!(unjoined(&apart, 6, 0), None);
 }
 
 #[test]

@@ -9,6 +9,7 @@ fn link(path: &str, cwd: Option<&str>) -> FileLink {
         cwd: cwd.map(Into::into),
         explicit: false,
         remote: Some("me@devbox".into()),
+        unjoined: None,
     }
 }
 

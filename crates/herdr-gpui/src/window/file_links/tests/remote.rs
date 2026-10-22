@@ -92,20 +92,19 @@ fn a_home_path_on_a_posix_host_is_left_for_it_to_expand(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
-fn a_failed_fetch_says_why_and_opens_nothing(cx: &mut gpui::TestAppContext) {
+fn a_missing_file_asks_for_another_path_and_opens_nothing(cx: &mut gpui::TestAppContext) {
     let host = FakeHost::new();
     let (view, cx) = on_host(&host, missing, "open /home/me/gone.md", "/home/me", cx);
     let path_cell = at(&view, cx, 7);
     modifier_click(cx, path_cell, Modifiers::secondary_key());
+    view.update_in(cx, |view, window, cx| view.poll_remote_files(window, cx));
     assert_eq!(host.asked().len(), 1);
     assert!(cx.opened_url().is_none());
     view.read_with(cx, |view, _| {
+        assert_eq!(view.menu.page, Some(crate::menu::Page::RemoteMissing));
         let (flash, _) = view.flash.as_ref().unwrap();
-        assert_eq!(flash.tone, Tone::Warning);
-        assert_eq!(
-            flash.text.as_ref(),
-            "Could not fetch the file: the file is not on the host"
-        );
+        assert_ne!(flash.tone, Tone::Warning, "no failure flash");
+        assert_eq!(flash.text.as_ref(), "Fetching gone.md from me@devbox…");
         assert!(view.remote_files.copy(TARGET, "/home/me/gone.md").is_none());
     });
 }

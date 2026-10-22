@@ -34,6 +34,33 @@ impl RemotePath {
         })
     }
 
+    /// The host's file the first row of `link` names alone, when a raw wrap
+    /// joined the next row's text to it, resolved as [`Self::from_link`]
+    /// resolves the joined path. The line printed belongs to the joined text.
+    pub(crate) fn unjoined(link: &FileLink) -> Option<Self> {
+        let target = link.remote.clone()?;
+        let (shell, path) = resolve(link.unjoined.as_deref()?, link.cwd.as_deref())?;
+        Some(Self {
+            target,
+            shell,
+            path,
+            line: None,
+        })
+    }
+
+    /// The host's file a path typed for `target` names, resolved under `cwd`
+    /// as a printed path is. `None` when it names none, as a relative path
+    /// does with no absolute `cwd`.
+    pub(crate) fn typed(target: &str, path: &str, cwd: Option<&str>) -> Option<Self> {
+        let (shell, path) = resolve(path, cwd)?;
+        Some(Self {
+            target: target.to_owned(),
+            shell,
+            path,
+            line: None,
+        })
+    }
+
     /// The host's file, as the transfer functions name it.
     pub(crate) fn remote_file(&self) -> herdr_client::RemoteFile<'_> {
         herdr_client::RemoteFile {

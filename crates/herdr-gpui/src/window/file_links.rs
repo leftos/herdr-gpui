@@ -63,6 +63,9 @@ pub(crate) struct FileLink {
     /// The SSH target of the host the pane runs on, whose file the path
     /// names; `None` for a pane on this machine.
     pub(crate) remote: Option<String>,
+    /// The path the first row alone reads, when a raw wrap joined the next
+    /// row's text to it. A local path ignores it.
+    pub(crate) unjoined: Option<String>,
 }
 
 /// Why a path has no real one.
@@ -365,6 +368,7 @@ impl HerdrWindow {
             line,
             query,
             explicit,
+            unjoined,
         } = link.target
         else {
             return None;
@@ -381,6 +385,7 @@ impl HerdrWindow {
             cwd,
             explicit,
             remote: self.ssh_target(),
+            unjoined,
         })
     }
 
