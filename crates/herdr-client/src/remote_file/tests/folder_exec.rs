@@ -70,6 +70,7 @@ fn probe_reports_the_tree_size_and_a_stable_fingerprint() {
     std::fs::create_dir_all(fixture.path("tree/nested")).unwrap();
     std::fs::write(fixture.path("tree/a.txt"), [b'a'; 10]).unwrap();
     std::fs::write(fixture.path("tree/nested/b.bin"), payload(5000)).unwrap();
+    std::os::unix::fs::symlink("../a.txt", fixture.path("tree/nested/link")).unwrap();
     // A listing that stops at the minute cannot tell these two edits apart.
     let first_edit = SystemTime::UNIX_EPOCH + Duration::from_secs(1_577_836_805);
     set_modified(&fixture.path("tree/a.txt"), first_edit);
@@ -79,6 +80,10 @@ fn probe_reports_the_tree_size_and_a_stable_fingerprint() {
     assert!(first.bytes <= 256 * 1024, "{first:?}");
     assert_eq!(first.bytes % 1024, 0);
     assert_eq!(first.top, "tree");
+    assert_eq!(
+        first.files, 2,
+        "two regular files; the folder and the link are not counted"
+    );
     let fingerprint = first.fingerprint.expect("this host has a SHA-256 tool");
 
     let home = fixture.probe("~/tree").unwrap();

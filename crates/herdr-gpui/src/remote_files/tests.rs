@@ -77,6 +77,7 @@ pub(crate) fn probed_folder() -> ProbedFolder {
         fingerprint: Some([7; 32]),
         top: "src".into(),
         links_skipped: 0,
+        files: 3,
     }
 }
 
