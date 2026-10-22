@@ -444,6 +444,10 @@ fn probes(fixture: &Fixture) {
     let first = parse_probe_output(&first.stdout).unwrap();
     assert_eq!(first.bytes, 5 * 1024, "100 + 5000 bytes rounds up to 5 KiB");
     assert_eq!(first.top, tree);
+    assert_eq!(
+        first.files, 2,
+        "two regular files; the folder is not counted"
+    );
     let fingerprint = first.fingerprint.expect("PowerShell always has SHA-256");
 
     let trailing = fixture.probe(&format!(
@@ -468,11 +472,13 @@ fn probes(fixture: &Fixture) {
     std::fs::create_dir(fixture.path(&format!("{tree}/empty"))).unwrap();
     let empty = fixture.probe(&fixture.text(tree));
     assert_code(&empty, 0);
+    let empty = parse_probe_output(&empty.stdout).unwrap();
     assert_ne!(
-        parse_probe_output(&empty.stdout).unwrap().fingerprint,
+        empty.fingerprint,
         Some(fingerprint),
         "an empty folder changes the fingerprint"
     );
+    assert_eq!(empty.files, 2, "an empty folder is not counted");
 
     std::fs::write(fixture.path(&format!("{tree}/added.txt")), b"added").unwrap();
     let changed = fixture.probe(&fixture.text(tree));
@@ -591,6 +597,11 @@ fn powershell_probe_skips_junctions() {
         assert_eq!(
             after.links_skipped, 1,
             "the junction is counted as left out"
+        );
+        assert_eq!(
+            (before.files, after.files),
+            (1, 1),
+            "the junction is skipped, not counted as a file"
         );
     }
 }

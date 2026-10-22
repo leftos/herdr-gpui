@@ -32,7 +32,7 @@ fn posix_folder_scripts_expand_only_a_leading_home() {
 }
 
 #[test]
-fn posix_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
+fn posix_probe_checks_missing_before_not_a_folder_and_prints_five_lines() {
     let script = scripts::posix_probe_script("/tree");
     let missing = script
         .find(&format!(
@@ -62,8 +62,14 @@ fn posix_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
     let absent = script.find("printf '%s\\n' '-'").unwrap();
     let printed_top = script.find("printf '%s\\n' \"$top\"").unwrap();
     let zero = script.rfind("printf '%s\\n' 0").unwrap();
+    let counted = script
+        .find("files=$(find \"$path\" -type f -exec printf '%.0sx' {} + | wc -c | tr -d ' ') || exit 1")
+        .unwrap();
+    let files = script.find("printf '%s\\n' \"$files\"").unwrap();
     assert!(folder < size && size < digest && size < absent);
     assert!(digest < printed_top && absent < printed_top && printed_top < zero);
+    assert!(zero < counted && counted < files);
+    assert!(script.contains("case $files in ''|*[!0-9]*) exit 1 ;; esac"));
     assert!(script.contains("du -sk -- \"$path\""));
     // GNU stat's `%y` carries nanoseconds, BSD's `%m` whole seconds, and
     // `ls -lnd` is the fallback for a host with neither.
@@ -132,7 +138,7 @@ fn powershell_folder_scripts_quote_the_path_as_a_literal() {
 }
 
 #[test]
-fn powershell_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
+fn powershell_probe_checks_missing_before_not_a_folder_and_prints_five_lines() {
     let script = scripts::powershell_probe_script("C:\\tree");
     let directory = script.find("[System.IO.Directory]::Exists($path)").unwrap();
     let file = script.find("[System.IO.File]::Exists($path)").unwrap();
@@ -149,6 +155,11 @@ fn powershell_probe_checks_missing_before_not_a_folder_and_prints_four_lines() {
     assert!(script.contains(&format!("if ($base -eq '') {{ exit {NOT_A_FILE_EXIT} }}")));
     assert!(script.contains("[int]$skipped = 0"));
     assert!(script.contains("$skipped++; continue"));
+    assert!(script.contains("[long]$files = 0"));
+    let counted = script.find("$files++").unwrap();
+    let summed = script.find("$total += $info.Length").unwrap();
+    assert!(summed < counted, "only the regular-file branch counts");
+    assert!(script.contains("([long]$skipped).ToString(), $files.ToString()))"));
     assert!(script.contains("FileLength = -1"));
     assert!(script.contains("Ticks = 0"));
     assert!(script.contains("FileAttributes]::ReparsePoint"));

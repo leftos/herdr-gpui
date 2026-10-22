@@ -154,7 +154,7 @@ pub struct Fetched {
 }
 
 /// A host folder's size, a fingerprint of its tree, the name its archive's
-/// entries start with, and the links its archive leaves out.
+/// entries start with, the links its archive leaves out, and its regular files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbedFolder {
     /// The tree's size in bytes, rounded up to KiB: a POSIX host's `du` counts
@@ -171,6 +171,8 @@ pub struct ProbedFolder {
     /// links as entries, which the extractor counts instead, so it reports 0;
     /// a Windows host skips reparse points before zipping.
     pub links_skipped: u32,
+    /// The regular files in the tree; links and directories are not counted.
+    pub files: u64,
 }
 
 /// Why a fetch or push failed.
@@ -252,8 +254,9 @@ pub fn fetch_remote_file(
 }
 
 /// Probe `folder` without transferring it: its uncompressed size, a
-/// fingerprint of its tree, the name its archive's entries start with, and the
-/// links its archive leaves out. Blocking: call only on a background worker.
+/// fingerprint of its tree, the name its archive's entries start with, the
+/// links its archive leaves out, and its regular files. Blocking: call only on
+/// a background worker.
 ///
 /// Args:
 ///     folder: The host, its shell, and the folder to probe.
@@ -262,13 +265,14 @@ pub fn fetch_remote_file(
 /// Returns:
 ///     The folder's size in bytes, rounded up to KiB, a SHA-256 over its
 ///     sorted metadata listing when the host has a SHA-256 tool, the top name
-///     its archive's entries start with, and the number of entries the host's
-///     archive leaves out as links.
+///     its archive's entries start with, the number of entries the host's
+///     archive leaves out as links, and the number of regular files in the
+///     tree.
 ///
 /// Errors:
 ///     [`crate::Error::RemoteFile`] for a missing path ([`Error::Missing`]),
 ///     a path that is not a folder ([`Error::NotAFolder`]), or an answer that
-///     is not four valid lines ([`Error::FolderProbe`]), or a target or
+///     is not five valid lines ([`Error::FolderProbe`]), or a target or
 ///     platform error from [`crate::Error`].
 pub fn probe_remote_folder(folder: RemoteFile<'_>, cancelled: &AtomicBool) -> Result<ProbedFolder> {
     let script = match folder.shell {
@@ -403,7 +407,7 @@ fn fetch_with_limits(
     })
 }
 
-/// Run a prepared probe command and parse its four-line answer.
+/// Run a prepared probe command and parse its five-line answer.
 fn probe_with(
     command: Command,
     cancelled: &AtomicBool,
@@ -434,8 +438,9 @@ fn classify_probe(error: crate::Error) -> Error {
 }
 
 /// Parse the probe's answer: a decimal KiB count, `-` or a lowercase SHA-256,
-/// the name the archive's entries start with, and the number of entries the
-/// archive leaves out, each on its own line.
+/// the name the archive's entries start with, the number of entries the
+/// archive leaves out, and the number of regular files in the tree, each on
+/// its own line.
 fn parse_probe_output(bytes: &[u8]) -> std::result::Result<ProbedFolder, Error> {
     let text = std::str::from_utf8(bytes).map_err(|_| Error::FolderProbe)?;
     let mut lines = text.lines();
@@ -443,15 +448,17 @@ fn parse_probe_output(bytes: &[u8]) -> std::result::Result<ProbedFolder, Error> 
     let sum = lines.next().ok_or(Error::FolderProbe)?;
     let top = lines.next().ok_or(Error::FolderProbe)?;
     let links = lines.next().ok_or(Error::FolderProbe)?;
+    let files = lines.next().ok_or(Error::FolderProbe)?;
     if lines.next().is_some() {
         return Err(Error::FolderProbe);
     }
-    let kib = parse_kib(kib)?;
+    let kib = parse_decimal(kib)?;
     Ok(ProbedFolder {
         bytes: kib.checked_mul(1024).ok_or(Error::FolderProbe)?,
         fingerprint: parse_fingerprint(sum)?,
         top: parse_top(top)?,
         links_skipped: parse_count(links)?,
+        files: parse_decimal(files)?,
     })
 }
 
@@ -466,12 +473,12 @@ fn parse_top(line: &str) -> std::result::Result<String, Error> {
 
 /// A count of entries: digits only, and it must fit a `u32`.
 fn parse_count(line: &str) -> std::result::Result<u32, Error> {
-    let count = parse_kib(line)?;
+    let count = parse_decimal(line)?;
     u32::try_from(count).map_err(|_| Error::FolderProbe)
 }
 
-/// A decimal KiB count: digits only, so a sign or padding is a bad answer.
-fn parse_kib(line: &str) -> std::result::Result<u64, Error> {
+/// A decimal count: digits only, so a sign or padding is a bad answer.
+fn parse_decimal(line: &str) -> std::result::Result<u64, Error> {
     if line.is_empty() || !line.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(Error::FolderProbe);
     }
