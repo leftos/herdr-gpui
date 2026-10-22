@@ -1,16 +1,16 @@
 //! Opening a folder printed in an SSH pane as a local copy: a probe of the
-//! host's tree, the questions a large or changed tree asks, and the fetch,
+//! host's tree, the question every transfer asks first, and the fetch,
 //! extraction, and opening that follow. Every probe and transfer runs on the
 //! background executor; the UI thread only starts them and applies results.
 
 use super::{
-    CopyKind, Error, FolderDone, Io, Key, MB, Owner, RemoteFiles, Result,
+    CopyKind, Error, FolderDone, Io, Key, MB, Missing, Owner, RemoteFiles, Result,
     archive::{self, ArchiveFormat},
     basename, cache, meta_of, remove_kept, watch,
 };
 use crate::window::{Flash, HerdrWindow, RemotePath};
 use gpui::Context;
-use herdr_client::RemoteShell;
+use herdr_client::{RemoteFileError, RemoteShell};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -25,14 +25,17 @@ pub(crate) struct FolderPrompt {
     /// The probe this question was raised from; both answers that transfer
     /// reuse it, so an answer never probes the host again.
     pub(crate) probed: herdr_client::ProbedFolder,
+    /// The working directory a relative path typed in its place is under.
+    pub(crate) cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FolderQuestion {
-    /// Its uncompressed contents exceed the configured warning size.
-    TooLarge { bytes: u64 },
-    /// A copy is here and its fingerprint differs from the host's.
-    Changed { bytes: u64 },
+    /// No copy is here yet.
+    Copy,
+    /// A copy is here and its fingerprint differs from the host's;
+    /// `copy_bytes` is what the copy's probe found.
+    Changed { copy_bytes: u64 },
 }
 
 impl RemoteFiles {
@@ -63,6 +66,15 @@ impl RemoteFiles {
             .remove(&(remote.target.clone(), remote.path.clone()));
     }
 
+    /// The uncompressed size the probe found when the folder copy of `key`
+    /// was fetched.
+    pub(crate) fn folder_bytes(&self, key: &Key) -> Option<u64> {
+        match self.copies.get(key)?.kind {
+            CopyKind::File => None,
+            CopyKind::Folder { bytes, .. } => Some(bytes),
+        }
+    }
+
     /// Forgets the copy of `key` and any question about it, as when the
     /// host's path stopped being the kind of thing the copy holds.
     pub(crate) fn forget(&mut self, key: &Key) {
@@ -74,12 +86,18 @@ impl RemoteFiles {
 
 impl HerdrWindow {
     /// Probes the host folder `remote` names and opens the copy already here,
-    /// or copies the folder and opens that.
-    pub(crate) fn open_remote_folder(&mut self, remote: RemotePath, cx: &mut Context<Self>) {
+    /// or asks whether to copy the folder; a relative path typed in the
+    /// question's place is under `cwd`.
+    pub(crate) fn open_remote_folder(
+        &mut self,
+        remote: RemotePath,
+        cwd: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let key = (remote.target.clone(), remote.path.clone());
         // The running probe or transfer owns the copy until it ends or the
         // question it asked is dismissed.
-        if !self.remote_files.fetching.insert(key.clone()) {
+        if !self.remote_files.fetching.insert(key) {
             return;
         }
         let name = basename(&remote.path, remote.shell).to_owned();
@@ -113,30 +131,46 @@ impl HerdrWindow {
             let (present, probed) = probe.await;
             // The window may have closed meanwhile; nothing opens then.
             let _ = this.update(cx, |this, cx| {
-                this.remote_folder_probed(key, remote, present, probed, cx)
+                this.remote_folder_probed(remote, cwd, present, probed, cx)
             });
         })
         .detach();
     }
 
     /// Applies a probe of `remote`'s folder: opens the copy that still
-    /// matches, asks about a changed or large one, or copies it.
+    /// matches, or asks whether to copy the folder or fetch it again. A
+    /// folder the host does not have asks for another path instead.
     fn remote_folder_probed(
         &mut self,
-        key: Key,
         remote: RemotePath,
+        cwd: Option<String>,
         present: bool,
         probed: herdr_client::Result<herdr_client::ProbedFolder>,
         cx: &mut Context<Self>,
     ) {
+        let key = (remote.target.clone(), remote.path.clone());
         let probed = match probed {
             Ok(probed) => probed,
+            // The poll opens the question once no page holds the window.
+            Err(herdr_client::Error::RemoteFile(RemoteFileError::Missing)) => {
+                self.remote_files.fetching.remove(&key);
+                tracing::info!(target = %remote.target, "Remote folder not on the host; asking for another path");
+                let prefill = remote.path.clone();
+                self.remote_files.missing.push_back(Missing {
+                    remote,
+                    query: None,
+                    cwd,
+                    prefill,
+                });
+                cx.notify();
+                return;
+            }
             Err(error) => {
                 self.remote_files.fetching.remove(&key);
                 // The host's path is a file now: a later click fetches it.
                 if matches!(
                     &error,
-                    herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::NotAFolder)
+                    herdr_client::Error::RemoteFile(RemoteFileError::NotAFolder)
                 ) {
                     self.remote_files.forget(&key);
                 }
@@ -147,39 +181,30 @@ impl HerdrWindow {
                 return;
             }
         };
-        if let Some((local, fingerprint)) = self
+        let copy = self
             .remote_files
             .folder(&remote.target, &remote.path)
-            .filter(|_| present)
-        {
+            .zip(self.remote_files.folder_bytes(&key))
+            .filter(|_| present);
+        let kind = match copy {
             // Both fingerprints prove the host's tree unchanged; a host
-            // without one is copied again rather than guessed at.
-            if fingerprint.is_some() && fingerprint == probed.fingerprint {
+            // without one asks rather than guess.
+            Some(((local, fingerprint), _))
+                if fingerprint.is_some() && fingerprint == probed.fingerprint =>
+            {
                 self.remote_files.fetching.remove(&key);
                 self.open_in_system_app(local, None, cx);
-            } else {
-                self.remote_files.enqueue_folder(FolderPrompt {
-                    remote,
-                    kind: FolderQuestion::Changed {
-                        bytes: probed.bytes,
-                    },
-                    probed,
-                });
+                return;
             }
-            return;
-        }
-        let warn = u64::from(self.config.remote_files.folder_warning_mb) * MB;
-        if probed.bytes > warn {
-            self.remote_files.enqueue_folder(FolderPrompt {
-                remote,
-                kind: FolderQuestion::TooLarge {
-                    bytes: probed.bytes,
-                },
-                probed,
-            });
-            return;
-        }
-        self.start_folder_transfer(remote, probed, cx);
+            Some((_, copy_bytes)) => FolderQuestion::Changed { copy_bytes },
+            None => FolderQuestion::Copy,
+        };
+        self.remote_files.enqueue_folder(FolderPrompt {
+            remote,
+            kind,
+            probed,
+            cwd,
+        });
     }
 
     /// Copies `remote`'s folder, which `probed` sized, and opens the copy.
@@ -194,7 +219,7 @@ impl HerdrWindow {
         self.show_flash(
             Flash::success(format!(
                 "Fetching {name} ({}) from {}…",
-                megabytes(probed.bytes),
+                folder_size(probed.bytes),
                 remote.target
             )),
             cx,
@@ -378,7 +403,7 @@ fn fill(
     })?;
     let fetched =
         (io.folder_fetch)(remote, &mut file, transfer.cap_bytes).map_err(|error| match error {
-            herdr_client::Error::RemoteFile(herdr_client::RemoteFileError::TooLarge { limit }) => {
+            herdr_client::Error::RemoteFile(RemoteFileError::TooLarge { limit }) => {
                 Error::FolderTooLarge { limit }
             }
             other => Error::Fetch(other),
@@ -462,9 +487,36 @@ fn format_for(shell: RemoteShell) -> ArchiveFormat {
     }
 }
 
-/// `bytes` as megabytes with one decimal.
-fn megabytes(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / MB as f64)
+/// `bytes` in the unit that fits once rounded: whole kilobytes, rounded up,
+/// under a megabyte; then megabytes, then gigabytes, with one decimal. A
+/// value that rounds up to a whole next unit is shown in that unit.
+pub(crate) fn folder_size(bytes: u64) -> String {
+    const GB: u64 = 1024 * MB;
+    let kilobytes = bytes.div_ceil(1024);
+    if kilobytes < 1024 {
+        return format!("{kilobytes} KB");
+    }
+    let megabytes = format!("{:.1}", bytes as f64 / MB as f64);
+    if bytes < GB && megabytes != "1024.0" {
+        return format!("{megabytes} MB");
+    }
+    format!("{:.1} GB", bytes as f64 / GB as f64)
+}
+
+/// `count` files, with a comma between each group of three digits.
+pub(crate) fn file_count(count: u64) -> String {
+    if count == 1 {
+        return "1 file".to_owned();
+    }
+    let digits = count.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    format!("{grouped} files")
 }
 
 fn remove_file(path: &Path) {

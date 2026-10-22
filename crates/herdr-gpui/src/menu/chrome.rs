@@ -511,6 +511,7 @@ impl HerdrWindow {
                         | Page::OpenCheckout
                         | Page::OpenLink
                         | Page::RemoteConflict
+                        | Page::RemoteFolder
                         | Page::RemoteMissing
                         | Page::RemoteUpload
                 ) || self.cloud_batch_open(),

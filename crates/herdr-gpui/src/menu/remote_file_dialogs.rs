@@ -1,8 +1,8 @@
 //! The questions a save to a remote file's copy asks: whether to upload it,
 //! and what to do when the host's file changed since it was synced; and the
 //! one a click's file the host does not have asks: which path to open
-//! instead. They open only when no other page holds the window, and wait
-//! until then.
+//! instead; and the one every folder transfer asks first. They open only
+//! when no other page holds the window, and wait until then.
 
 use super::Page;
 use crate::{
@@ -10,16 +10,25 @@ use crate::{
     fonts::StyledFont,
     remote_files::{
         Answer, FolderPrompt, FolderQuestion, Missing, Prompt, PromptKind, Resolution, basename,
+        file_count, folder_size,
     },
     search_input::SearchInput,
     window::RemotePath,
 };
 use gpui::{prelude::*, *};
+use std::ops::Range;
 
 /// The not-on-host question: the click's missing file, and the field holding
 /// the path to open instead.
 pub(in crate::menu) struct MissingDialog {
     missing: Missing,
+    input: Entity<SearchInput>,
+}
+
+/// The folder question: the probe it asks about, and the field holding the
+/// path to copy.
+pub(in crate::menu) struct FolderDialog {
+    prompt: FolderPrompt,
     input: Entity<SearchInput>,
 }
 
@@ -36,26 +45,39 @@ impl HerdrWindow {
         if self.menu.page.is_some() || !self.open_menu(window, cx) {
             return false;
         }
-        let input = cx.new(SearchInput::new);
-        input.update(cx, |input, cx| {
-            input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
-            input.set_placeholder("Path on the host", cx);
-            input.set_text_selected(&missing.prefill, cx);
-            window.focus(&input.focus, cx);
-        });
+        let input = self.remote_path_field(&missing.prefill, window, cx);
         self.menu.remote_missing = Some(MissingDialog { missing, input });
         self.menu.page = Some(Page::RemoteMissing);
         cx.notify();
         true
     }
 
-    /// Whether `event` belongs to the not-on-host question's field, which
+    /// A focused host path field holding `path`, all of it selected.
+    fn remote_path_field(
+        &self,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SearchInput> {
+        let input = cx.new(SearchInput::new);
+        input.update(cx, |input, cx| {
+            input.set_appearance(self.config.ui.clone(), self.theme.clone(), cx);
+            input.set_placeholder("Path on the host", cx);
+            input.set_text_selected(path, cx);
+            window.focus(&input.focus, cx);
+        });
+        input
+    }
+
+    /// Whether `event` belongs to the open question's path field, which
     /// owns typing and composition; the question takes only Escape and Enter.
-    pub(in crate::menu) fn remote_missing_field_key(&self, event: &KeyDownEvent, cx: &App) -> bool {
-        self.menu
-            .remote_missing
-            .as_ref()
-            .is_some_and(|dialog| dialog.input.read(cx).is_composing())
+    pub(in crate::menu) fn remote_path_field_key(&self, event: &KeyDownEvent, cx: &App) -> bool {
+        let input = match self.menu.page {
+            Some(Page::RemoteMissing) => self.menu.remote_missing.as_ref().map(|d| &d.input),
+            Some(Page::RemoteFolder) => self.menu.remote_folder.as_ref().map(|d| &d.input),
+            _ => None,
+        };
+        input.is_some_and(|input| input.read(cx).is_composing())
             || !matches!(event.keystroke.key.as_str(), "escape" | "enter")
     }
 
@@ -103,6 +125,32 @@ impl HerdrWindow {
         Some(dialog.input.read(cx).text().to_owned())
     }
 
+    /// The open folder question's title, path, and facts lines, as it shows
+    /// them.
+    #[cfg(test)]
+    pub(crate) fn remote_folder_text(&self) -> Option<Vec<String>> {
+        let prompt = &self.menu.remote_folder.as_ref()?.prompt;
+        let text = FolderText::of(prompt);
+        let mut lines = vec![text.title, prompt.remote.path.clone(), text.facts];
+        lines.extend(text.copy);
+        Some(lines)
+    }
+
+    /// The host path a question is about, read-only.
+    fn remote_path_box(&self, id: &'static str, path: &str) -> Div {
+        div().px(px(8.)).child(
+            div()
+                .debug_selector(move || id.into())
+                .rounded(px(crate::config::corners::CONTROL))
+                .bg(rgb(self.theme.active))
+                .px(px(10.))
+                .py(px(6.))
+                .overflow_hidden()
+                .text_font(&self.config.terminal)
+                .child(path.to_owned()),
+        )
+    }
+
     pub(in crate::menu) fn render_remote_missing(&self, cx: &mut Context<Self>) -> Div {
         let Some(dialog) = &self.menu.remote_missing else {
             return div();
@@ -111,19 +159,7 @@ impl HerdrWindow {
         div()
             .debug_selector(|| "remote-missing".into())
             .child(title(format!("Not on {}", remote.target)))
-            .child(
-                div().px(px(8.)).child(
-                    div()
-                        .debug_selector(|| "remote-missing-path".into())
-                        .rounded(px(crate::config::corners::CONTROL))
-                        .bg(rgb(self.theme.active))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .overflow_hidden()
-                        .text_font(&self.config.terminal)
-                        .child(remote.path.clone()),
-                ),
-            )
+            .child(self.remote_path_box("remote-missing-path", &remote.path))
             .child(div().p(px(8.)).child(dialog.input.clone()))
             .child(
                 buttons()
@@ -311,7 +347,8 @@ impl HerdrWindow {
     }
 
     /// Shows the folder question `prompt` unless another page holds the
-    /// window. `true` when it opened.
+    /// window, its field focused and holding the folder's path. `true` when
+    /// it opened.
     pub(crate) fn show_remote_folder_prompt(
         &mut self,
         prompt: &FolderPrompt,
@@ -321,32 +358,96 @@ impl HerdrWindow {
         if self.menu.page.is_some() || !self.open_menu(window, cx) {
             return false;
         }
-        self.menu.remote_folder = Some(prompt.clone());
+        let input = self.remote_path_field(&prompt.remote.path, window, cx);
+        self.menu.remote_folder = Some(FolderDialog {
+            prompt: prompt.clone(),
+            input,
+        });
         self.menu.page = Some(Page::RemoteFolder);
+        cx.notify();
         true
     }
 
     /// Closing the folder question without an answer transfers nothing, and
     /// lets a later click probe again.
     pub(in crate::menu) fn decline_remote_folder_on_dismiss(&mut self) {
-        if let Some(prompt) = self.menu.remote_folder.take() {
-            self.remote_files.clear_folder_key(&prompt.remote);
+        if let Some(dialog) = self.menu.remote_folder.take() {
+            self.remote_files.clear_folder_key(&dialog.prompt.remote);
         }
     }
 
-    /// Answers the folder question the window shows, reusing the probe it
-    /// was raised from so the host is never probed again.
+    /// Answers the folder question with the button Enter presses: Copy for
+    /// a first fetch, Open existing for a changed folder.
+    pub(in crate::menu) fn submit_remote_folder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = &self.menu.remote_folder else {
+            return;
+        };
+        let answer = match dialog.prompt.kind {
+            FolderQuestion::Copy => FolderAnswer::Transfer,
+            FolderQuestion::Changed { .. } => FolderAnswer::Open,
+        };
+        self.confirm_remote_folder(answer, window, cx);
+    }
+
+    /// Answers the folder question the window shows. While the field holds
+    /// the folder's path, the answer reuses the probe it was raised from, so
+    /// the host is never probed again; any other path is opened as a click
+    /// opens one, and asks its own question. An empty field, or a relative
+    /// path with no working directory to put it under, does nothing.
     pub(in crate::menu) fn confirm_remote_folder(
         &mut self,
         answer: FolderAnswer,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let prompt = self.menu.remote_folder.take();
-        self.dismiss_menu(window, cx);
-        let Some(prompt) = prompt else {
+        if answer == FolderAnswer::Cancel {
+            self.dismiss_menu(window, cx);
+            return;
+        }
+        let Some(choice) = self.remote_folder_choice(cx) else {
             return;
         };
+        let Some(dialog) = self.menu.remote_folder.take() else {
+            return;
+        };
+        let prompt = dialog.prompt;
+        let Some(typed) = choice else {
+            self.dismiss_menu(window, cx);
+            self.answer_remote_folder(prompt, answer, cx);
+            return;
+        };
+        self.remote_files.clear_folder_key(&prompt.remote);
+        self.dismiss_menu(window, cx);
+        self.open_remote_file(typed, None, None, prompt.cwd, cx);
+    }
+
+    /// What the field asks for: `None` while it holds nothing to open,
+    /// `Some(None)` while it holds the folder's own path, else the typed path.
+    fn remote_folder_choice(&self, cx: &App) -> Option<Option<RemotePath>> {
+        let dialog = self.menu.remote_folder.as_ref()?;
+        let input = dialog.input.read(cx);
+        let text = input.text().trim();
+        if input.is_composing() || text.is_empty() {
+            return None;
+        }
+        let prompt = &dialog.prompt;
+        if text == prompt.remote.path {
+            return Some(None);
+        }
+        RemotePath::typed(&prompt.remote.target, text, prompt.cwd.as_deref()).map(Some)
+    }
+
+    /// Transfers the folder `prompt` asked about, or opens its copy.
+    fn answer_remote_folder(
+        &mut self,
+        prompt: FolderPrompt,
+        answer: FolderAnswer,
+        cx: &mut Context<Self>,
+    ) {
         match answer {
             FolderAnswer::Transfer => {
                 self.start_folder_transfer(prompt.remote, prompt.probed, cx);
@@ -365,79 +466,64 @@ impl HerdrWindow {
     }
 
     pub(in crate::menu) fn render_remote_folder(&self, cx: &mut Context<Self>) -> Div {
-        let Some(prompt) = &self.menu.remote_folder else {
+        let Some(dialog) = &self.menu.remote_folder else {
             return div();
         };
-        let name = basename(&prompt.remote.path, prompt.remote.shell);
-        let bytes = match prompt.kind {
-            FolderQuestion::TooLarge { bytes } | FolderQuestion::Changed { bytes } => bytes,
-        };
-        let (heading, body) = match prompt.kind {
-            FolderQuestion::TooLarge { .. } => (
-                format!("Copy {name} from {}?", prompt.remote.target),
-                format!(
-                    "Its contents are {}. Copying them may take a while.",
-                    megabytes(bytes)
-                ),
-            ),
-            FolderQuestion::Changed { .. } => (
-                format!("{name} changed on {}", prompt.remote.target),
-                format!(
-                    "A copy fetched earlier is here; its contents are {}.",
-                    megabytes(bytes)
-                ),
-            ),
-        };
+        let prompt = &dialog.prompt;
+        let text = FolderText::of(prompt);
         let theme = &self.theme;
+        let strong = HighlightStyle {
+            color: Some(rgb(theme.foreground).into()),
+            font_weight: Some(FontWeight::SEMIBOLD),
+            ..Default::default()
+        };
+        let facts = StyledText::new(text.facts)
+            .with_highlights(text.highlights.map(|range| (range, strong)));
+        let cancel = self.folder_button(
+            "remote-folder-cancel",
+            "Cancel",
+            false,
+            FolderAnswer::Cancel,
+            cx,
+        );
         div()
             .debug_selector(|| "remote-folder".into())
-            .child(title(heading))
+            .child(title(text.title))
+            .child(self.remote_path_box("remote-folder-path", &prompt.remote.path))
+            .child(div().p(px(8.)).child(dialog.input.clone()))
             .child(
-                div().px(px(8.)).child(
-                    div()
-                        .debug_selector(|| "remote-folder-path".into())
-                        .rounded(px(crate::config::corners::CONTROL))
-                        .bg(rgb(theme.active))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .overflow_hidden()
-                        .text_font(&self.config.terminal)
-                        .child(div().child(prompt.remote.target.clone()))
-                        .child(div().child(prompt.remote.path.clone())),
-                ),
+                div()
+                    .p(px(8.))
+                    .text_color(rgb(theme.muted))
+                    .child(div().child(facts))
+                    .when_some(text.copy, |lines, copy| lines.child(div().child(copy))),
             )
-            .child(div().p(px(8.)).text_color(rgb(theme.muted)).child(body))
             .child(match prompt.kind {
-                FolderQuestion::TooLarge { .. } => buttons()
+                FolderQuestion::Copy => buttons()
                     .child(self.folder_button(
-                        "remote-folder-transfer",
-                        "Transfer anyway",
+                        "remote-folder-copy",
+                        "Copy",
                         true,
                         FolderAnswer::Transfer,
                         cx,
                     ))
-                    .child(self.folder_button(
-                        "remote-folder-cancel",
-                        "Cancel",
-                        false,
-                        FolderAnswer::Cancel,
-                        cx,
-                    )),
+                    .child(cancel),
                 FolderQuestion::Changed { .. } => buttons()
                     .child(self.folder_button(
                         "remote-folder-refetch",
                         "Re-fetch",
-                        true,
+                        false,
                         FolderAnswer::Transfer,
                         cx,
                     ))
                     .child(self.folder_button(
                         "remote-folder-open",
                         "Open existing",
-                        false,
+                        true,
                         FolderAnswer::Open,
                         cx,
-                    )),
+                    ))
+                    .child(cancel),
             })
     }
 
@@ -504,16 +590,51 @@ impl HerdrWindow {
 }
 
 /// The answers a folder question takes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::menu) enum FolderAnswer {
     Cancel,
     Open,
     Transfer,
 }
 
-/// `bytes` as megabytes with one decimal.
-fn megabytes(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+/// What the folder question says: its title, its facts line and the ranges
+/// of it that stand out, and for a changed folder the size of the copy here.
+struct FolderText {
+    title: String,
+    facts: String,
+    highlights: [Range<usize>; 2],
+    copy: Option<String>,
+}
+
+impl FolderText {
+    fn of(prompt: &FolderPrompt) -> Self {
+        let size = folder_size(prompt.probed.bytes);
+        let count = file_count(prompt.probed.files);
+        let target = &prompt.remote.target;
+        let (title, lead, copy) = match prompt.kind {
+            FolderQuestion::Copy => (format!("Copy this folder from {target}?"), "", None),
+            FolderQuestion::Changed { copy_bytes } => (
+                format!(
+                    "{} changed on {target}",
+                    basename(&prompt.remote.path, prompt.remote.shell)
+                ),
+                "Now ",
+                Some(format!("Your copy: {}", folder_size(copy_bytes))),
+            ),
+        };
+        let size_at = lead.len();
+        let count_at = size_at + size.len() + " in ".len();
+        let highlights = [
+            size_at..size_at + size.len(),
+            count_at..count_at + count.len(),
+        ];
+        Self {
+            title,
+            facts: format!("{lead}{size} in {count}, before compression"),
+            highlights,
+            copy,
+        }
+    }
 }
 
 fn title(text: String) -> Div {

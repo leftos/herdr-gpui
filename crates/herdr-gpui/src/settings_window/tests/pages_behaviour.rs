@@ -210,13 +210,9 @@ fn folder_size_fields_commit_valid_numbers_and_hold_invalid_ones(cx: &mut TestAp
     cx.simulate_resize(size(px(960.), px(2000.)));
     cx.update(|window, _| window.activate_window());
     show(&view, Section::General, cx);
-    // Raise the cap so 4000 MB is a legal warning.
-    view.update(cx, |view, _| {
-        view.config.remote_files.folder_transfer_cap_mb = 4096
-    });
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            view.begin_number_edit(NumberField::FolderWarningMb, 64., window, cx)
+            view.begin_number_edit(NumberField::FolderTransferCapMb, 512., window, cx)
         })
     });
     cx.simulate_input("4000");
@@ -224,31 +220,14 @@ fn folder_size_fields_commit_valid_numbers_and_hold_invalid_ones(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(
         edits.lock().unwrap().last(),
-        Some(&Preference::FolderWarningMb(4000))
+        Some(&Preference::FolderTransferCapMb(4000))
     );
-
-    // The warning may not land above the cap the window shows.
-    view.update(cx, |view, _| {
-        view.config.remote_files.folder_transfer_cap_mb = 512
-    });
     let before = edits.lock().unwrap().len();
-    cx.update(|window, cx| {
-        view.update(cx, |view, cx| {
-            view.begin_number_edit(NumberField::FolderWarningMb, 64., window, cx)
-        })
-    });
-    cx.simulate_input("4000");
-    cx.simulate_keystrokes("enter");
-    cx.run_until_parked();
-    assert_eq!(edits.lock().unwrap().len(), before);
-    view.read_with(cx, |view, _| {
-        assert_eq!(view.config.remote_files.folder_warning_mb, 64);
-    });
 
     // Zero is outside the field's range, so the field stays open and invalid.
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            view.begin_number_edit(NumberField::FolderWarningMb, 64., window, cx)
+            view.begin_number_edit(NumberField::FolderTransferCapMb, 512., window, cx)
         })
     });
     cx.simulate_input("0");

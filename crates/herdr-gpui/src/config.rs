@@ -822,11 +822,6 @@ impl Config {
             .notifications
             .resolve(NotificationConfig::default());
         config.remote_files = settings.remote_files.resolve(RemoteFilesConfig::default());
-        if !config.remote_files.valid() {
-            return Err(Error::Toml(serde::de::Error::custom(
-                "remote_files.folder_warning_mb must not exceed remote_files.folder_transfer_cap_mb",
-            )));
-        }
         config.clipboard_overrides = settings.clipboard_toast;
         config.clipboard_toast = settings.clipboard_toast.resolve(base.clipboard_toast);
         config.bell = settings.bell;
