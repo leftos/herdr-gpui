@@ -99,6 +99,48 @@ fn file_suffix(url: &url::Url) -> Option<String> {
     (!suffix.is_empty()).then_some(suffix)
 }
 
+/// A document link in rich text, using the terminal's existing path rules.
+/// Classification performs no file access; opening still requires a click.
+pub(crate) fn file_target(destination: &str) -> Option<RowTarget> {
+    if destination.starts_with(['#', '?'])
+        || destination.starts_with("//")
+        || destination.starts_with("\\\\")
+        || destination.len() > MAX_PATH_BYTES
+        || destination.chars().any(char::is_control)
+    {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        // A drive letter is a path prefix here, not a URL scheme.
+        if std::path::Path::new(destination).is_absolute() {
+            let (path, line) = path::without_location(destination);
+            return Some(RowTarget::Path {
+                path: path.to_owned(),
+                line,
+                query: None,
+                explicit: true,
+            });
+        }
+    }
+    let RowTarget::Path {
+        path,
+        line: fragment_line,
+        query,
+        ..
+    } = explicit_target(destination)
+    else {
+        return None;
+    };
+    let (path, line) = path::without_location(&path);
+    Some(RowTarget::Path {
+        path: path.to_owned(),
+        line: line.or(fragment_line),
+        query,
+        explicit: true,
+    })
+}
+
 /// What an address read from plain text points at. Only the defined schemes
 /// are links there: the web's, `file://` on this host, and the ones that
 /// open without asking. A printed path is one only if its file exists.
