@@ -227,17 +227,24 @@ pub(super) fn staged_path(local: &Path) -> PathBuf {
 /// already be as long as a file name can be. The folder holds this one copy
 /// alone, so skipping a name equal to the copy's own, which a host's file
 /// named like `.0.part` would have, is all that keeps them apart; a failed
-/// write or its cleanup then never touches the copy.
+/// write or its cleanup then never touches the copy. Case is ignored in
+/// that comparison, because the cache may sit on a disk where `.0.PART` and
+/// `.0.part` are one file.
 fn beside(local: &Path, extension: &str) -> PathBuf {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     beside_from(local, extension, || SERIAL.fetch_add(1, Ordering::Relaxed))
 }
 
-/// [`beside`] with the serial numbers drawn from `next`.
+/// [`beside`] with the serial numbers drawn from `next`: the first name
+/// that differs from `local`'s by more than ASCII case.
 pub(super) fn beside_from(local: &Path, extension: &str, mut next: impl FnMut() -> u64) -> PathBuf {
     loop {
         let path = local.with_file_name(format!(".{}.{extension}", next()));
-        if path != local {
+        let own = local
+            .file_name()
+            .zip(path.file_name())
+            .is_some_and(|(own, candidate)| own.eq_ignore_ascii_case(candidate));
+        if !own {
             return path;
         }
     }

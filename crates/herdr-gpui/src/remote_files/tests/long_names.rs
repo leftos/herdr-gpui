@@ -69,3 +69,38 @@ fn a_temporary_name_is_never_the_copy_s_own() {
         "another extension is another name"
     );
 }
+
+/// The cache may sit on a disk that ignores case, where `.5.PART` and
+/// `.5.part` are one file: a temporary name differing from the copy's only
+/// by case is the copy's own.
+#[test]
+fn a_temporary_name_never_differs_from_the_copy_s_own_only_by_case() {
+    for copy in [".5.PART", ".5.Part"] {
+        let local = Path::new("cache").join(copy);
+        let mut serials = 5..;
+        assert_eq!(
+            cache::beside_from(&local, "part", || serials.next().unwrap()),
+            Path::new("cache").join(".6.part"),
+            "{copy}"
+        );
+    }
+}
+
+/// A part that cannot be created because a file is already at its name
+/// leaves that file as it was: it may be the copy itself.
+#[test]
+fn a_failed_create_leaves_the_file_already_there() {
+    let host = FakeHost::new();
+    let root = tempfile::tempdir().unwrap();
+    let there = root.path().join(".5.part");
+    std::fs::write(&there, b"# Edits\n").unwrap();
+    let Err(error) = write_part(&host.io(notes), &remote(r"C:\dev\.5.PART"), &there) else {
+        panic!("a part was created over a file already there");
+    };
+    assert!(
+        matches!(&error, Error::Cache { path, .. } if *path == there),
+        "{error:?}"
+    );
+    assert_eq!(std::fs::read(&there).unwrap(), b"# Edits\n");
+    assert!(host.asked().is_empty(), "the host is not asked");
+}
