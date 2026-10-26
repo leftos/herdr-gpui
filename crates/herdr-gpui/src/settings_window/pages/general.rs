@@ -287,7 +287,7 @@ impl SettingsWindow {
                     value,
                     range: field.range(),
                     unit: "MB",
-                    slider: false,
+                    look: ui::Look::Steppers,
                     enabled: true,
                 },
                 self.number_edit_for(field),
