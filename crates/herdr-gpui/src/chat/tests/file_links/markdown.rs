@@ -61,6 +61,7 @@ fn document_link_fixture_round_trips_hidden_directories_and_filename_punctuation
         line: None,
         query: None,
         explicit: true,
+        unjoined: None,
     }) = file_target(&target)
     else {
         panic!("file URL was not a local document target: {target}");

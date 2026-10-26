@@ -29,6 +29,7 @@ fn windows_file_links_accept_absolute_drives_and_reject_network_paths() {
                 line,
                 query: None,
                 explicit: true,
+                unjoined: None,
             })
         );
     }
@@ -55,6 +56,7 @@ fn explicit_document_targets_reuse_path_and_line_rules_without_unsafe_schemes() 
                 line,
                 query: None,
                 explicit: true,
+                unjoined: None,
             })
         );
     }
