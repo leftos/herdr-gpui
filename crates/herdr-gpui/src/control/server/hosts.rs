@@ -1,7 +1,9 @@
-//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, `remote-files`, and
-//! `security`: what the window gathers about its hosts, read from the state it
-//! already keeps. Nothing here starts a lookup, a scan, or a sample of its own;
-//! a request answers from the latest one, and says why when there is none.
+//! `pr`, `host`, `cloud add`, `ports`, `usage`, `system`, `remote-files`,
+//! `security`, and `automation approve`: what the
+//! window gathers about its hosts, read from the state it already keeps.
+//! Nothing here starts a lookup, a scan, or a sample of its own; a request
+//! answers from the latest one, and says why when there is none.
+mod automation;
 mod ports;
 mod pr;
 mod remote_files;
@@ -58,10 +60,16 @@ pub(super) fn serve(
         HostOp::SecurityOpen { repository, item } => in_window(caller, cx, |view, window, cx| {
             security::open(view, &repository, &item, window, cx)
         }),
+        HostOp::AutomationApprove { path, host } => in_window(caller, cx, |view, window, cx| {
+            automation::approve(view, caller, &path, host.as_deref(), window, cx)
+        }),
         HostOp::Cloud => cloud(caller, cx),
         HostOp::CloudSetup { id } => {
             in_free_window(caller, cx, |view, _, cx| cloud_setup(view, &id, cx))
         }
+        HostOp::CloudImages { provider } => in_window(caller, cx, |view, _, cx| {
+            cloud_images(view, caller, provider.as_deref(), cx)
+        }),
         HostOp::RemoteFiles => in_window(caller, cx, |view, _, _| {
             remote_files::list(view.remote_files.list(), remote_files::LIST_BUDGET)
         }),
@@ -278,6 +286,14 @@ pub(super) fn load_info(host: &str, sample: &crate::system_load::Sample) -> Load
         uptime_seconds: sample.uptime,
         disk_available: sample.disk.map(|disk| disk.available),
         disk_total: sample.disk.map(|disk| disk.total),
+        gpu_count: sample.gpu.map(|gpu| gpu.count),
+        gpu_percent: sample.gpu.and_then(|gpu| gpu.busy),
+        gpu_memory_used: sample
+            .gpu
+            .and_then(|gpu| gpu.memory.map(|memory| memory.used)),
+        gpu_memory_total: sample
+            .gpu
+            .and_then(|gpu| gpu.memory.map(|memory| memory.total)),
     }
 }
 
@@ -366,6 +382,84 @@ fn cloud_setup(
     cx: &mut gpui::Context<HerdrWindow>,
 ) -> Response {
     let _ = (view, name, cx);
+    Response::error(ErrorCode::Unsupported, "This build has no cloud providers")
+}
+
+/// Builds the sandbox images of the caller's workspace's repository, as
+/// **Build sandbox images** in its menu does.
+#[cfg(feature = "cloud")]
+fn cloud_images(
+    view: &mut HerdrWindow,
+    caller: &Caller,
+    provider: Option<&str>,
+    cx: &mut gpui::Context<HerdrWindow>,
+) -> Response {
+    let place = match Place::of(view, caller) {
+        Ok(place) => place,
+        Err(response) => return response,
+    };
+    let Some(tree) = place
+        .workspace(view)
+        .and_then(|workspace| workspace.worktree.clone())
+    else {
+        return Response::error(ErrorCode::NotFound, "The workspace is not a Git checkout");
+    };
+    let Some(origin) = view.dispatch_origin(&place.workspace, &tree.key, &tree.label) else {
+        return Response::error(
+            ErrorCode::Unsupported,
+            format!("Herdr UI cannot run scripts on {}", place.label),
+        );
+    };
+    let Some(path) = crate::cloud::image::checkout_of(&origin.repo_key).map(str::to_owned) else {
+        return Response::error(
+            ErrorCode::NotFound,
+            "The repository has no checkout to build from",
+        );
+    };
+    let providers: Vec<_> = view
+        .sandbox_image_providers()
+        .into_iter()
+        .filter(|&each| {
+            provider.is_none_or(|name| {
+                crate::cloud::name(each).eq_ignore_ascii_case(name)
+                    || each.key().eq_ignore_ascii_case(name)
+            })
+        })
+        .collect();
+    if providers.is_empty() {
+        return Response::error(
+            ErrorCode::NotFound,
+            "No provider here holds sandbox images: add a container or Daytona device first",
+        );
+    }
+    let mut names = Vec::new();
+    for each in providers {
+        if let Err(error) = view.build_sandbox_image(
+            each,
+            &origin.place.endpoint_id,
+            path.clone(),
+            tree.label.clone(),
+            cx,
+        ) {
+            return Response::error(ErrorCode::Failed, error.to_string());
+        }
+        names.push(crate::cloud::name(each));
+    }
+    Response::done(format!(
+        "Building {}'s images for {}; `herdr-gpui cloud images` shows them once built",
+        tree.label,
+        names.join(" and ")
+    ))
+}
+
+#[cfg(not(feature = "cloud"))]
+fn cloud_images(
+    view: &mut HerdrWindow,
+    caller: &Caller,
+    provider: Option<&str>,
+    cx: &mut gpui::Context<HerdrWindow>,
+) -> Response {
+    let _ = (view, caller, provider, cx);
     Response::error(ErrorCode::Unsupported, "This build has no cloud providers")
 }
 

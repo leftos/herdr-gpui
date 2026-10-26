@@ -318,7 +318,8 @@ impl HerdrWindow {
                     self.browser
                         .pages
                         .ids()
-                        .filter(|id| store.get(*id).is_none()),
+                        // A chat's panel page has no tab; its chat owns it.
+                        .filter(|id| store.get(*id).is_none() && !id.is_panel()),
                 )
                 .collect();
             if !gone.is_empty() {
@@ -521,7 +522,7 @@ impl HerdrWindow {
     /// another frame. Only builds that show pages have either.
     pub(crate) fn annotations_moving(&self) -> bool {
         #[cfg(any(target_os = "macos", windows))]
-        return self.browser.annotations.moving(std::time::Instant::now());
+        return self.browser.annotations.moving(crate::motion::now());
         #[cfg(not(any(target_os = "macos", windows)))]
         false
     }
