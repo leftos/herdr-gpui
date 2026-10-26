@@ -62,8 +62,7 @@ impl Links {
                 pane_id: target.pane_id.clone(),
                 link: RowLink {
                     target: link,
-                    row: 0,
-                    columns: 0..0,
+                    rows: Vec::new(),
                 },
             }) else {
                 return;

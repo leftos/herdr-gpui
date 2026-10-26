@@ -149,10 +149,12 @@ fn a_document_check_cannot_open_after_switching_endpoints(cx: &mut gpui::TestApp
             FileLink {
                 path: "notes.md".into(),
                 line: None,
+                query: None,
                 pane_id: "p1".into(),
                 cwd: Some(directory.path().to_str().unwrap().into()),
                 explicit: true,
                 remote: None,
+                unjoined: None,
             },
             false,
             cx,

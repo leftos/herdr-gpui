@@ -118,18 +118,28 @@ pub(crate) fn file_target(destination: &str) -> Option<RowTarget> {
             return Some(RowTarget::Path {
                 path: path.to_owned(),
                 line,
+                query: None,
                 explicit: true,
+                unjoined: None,
             });
         }
     }
-    let RowTarget::Path { path, .. } = explicit_target(destination) else {
+    let RowTarget::Path {
+        path,
+        line: fragment_line,
+        query,
+        ..
+    } = explicit_target(destination)
+    else {
         return None;
     };
     let (path, line) = path::without_location(&path);
     Some(RowTarget::Path {
         path: path.to_owned(),
-        line,
+        line: line.or(fragment_line),
+        query,
         explicit: true,
+        unjoined: None,
     })
 }
 
