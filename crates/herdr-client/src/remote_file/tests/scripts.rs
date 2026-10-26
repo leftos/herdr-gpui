@@ -106,9 +106,10 @@ fn posix_push_checks_it_can_write_in_place_before_writing() {
     let renamed = absent.find("\nmv -f $no_follow").unwrap();
     let last = absent.rfind(check).unwrap();
     assert!(absent.find("probe_to=$(mktemp").unwrap() < last && last < renamed);
+    assert!(script.contains("??????????+*) keep= ;;"), "an ACL refuses");
     assert!(
-        script.contains("??????????[+@]*"),
-        "macOS marks an ACL with @ too"
+        script.contains("??????????@*)") && script.contains("ls -lde -- \"$listed\""),
+        "macOS hides an ACL behind @, so @ asks ls -lde"
     );
     assert!(
         script.contains("getfacl -s -- \"$listed\""),
