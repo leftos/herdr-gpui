@@ -478,6 +478,34 @@ fn push_renames_over_a_file_whose_group_already_matches() {
     assert_eq!(entries(fixture.home.path()), ["file"]);
 }
 
+/// macOS marks a file with `@` for any extended attribute (a provenance-sandboxed
+/// process tags every file it makes); with no ACL in `ls -lde`, the push still renames.
+#[test]
+fn push_renames_over_a_file_whose_listing_shows_extended_attributes() {
+    use std::os::unix::fs::MetadataExt;
+    let mut fixture = Fixture::new();
+    std::fs::write(fixture.path("file"), b"old").unwrap();
+    fixture.set_mode("file", 0o640);
+    let body = format!(
+        "case \"$1\" in\n-ld|-lde) shift; '{ls}' -ld \"$@\" | sed 's/^\\(..........\\)[.+@]\\{{0,1\\}} /\\1@ /'; exit ;;\nesac\nexec '{ls}' \"$@\"\n",
+        ls = real_tool("ls").display(),
+    );
+    let _bin = fixture.shim("ls", &body);
+    let before = std::fs::metadata(fixture.path("file")).unwrap();
+    fixture
+        .push(&fixture.text("file"), Expect::Any, b"new")
+        .unwrap();
+    let after = std::fs::metadata(fixture.path("file")).unwrap();
+    assert_eq!(std::fs::read(fixture.path("file")).unwrap(), b"new");
+    assert_ne!(
+        after.ino(),
+        before.ino(),
+        "the copy was renamed over the file"
+    );
+    assert_eq!(fixture.mode("file"), 0o640);
+    assert_eq!(entries(fixture.home.path()), ["file"]);
+}
+
 #[test]
 #[ignore = "needs setfacl and an ACL-capable filesystem"]
 fn push_overwrites_a_file_with_an_acl_in_place() {

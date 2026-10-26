@@ -197,9 +197,10 @@ fn absent_check() -> String {
 /// The access is not kept when it cannot be read or copied: `$like` is a
 /// symbolic link or not a regular file (GNU `stat` reads a link as 777, and a
 /// folder has a mode of its own), no `stat` reads the mode or group, `ls -ld`
-/// fails, `ls -ld` marks `$like` or the copy with `+` or macOS's `@` (an ACL,
-/// or extended attributes that may hide one), or `getfacl -s` lists an ACL
-/// on either (BusyBox `ls` never marks one). A folder's default ACL reaches
+/// fails, `ls -ld` marks `$like` or the copy with `+` (an ACL), or with
+/// macOS's `@` (extended attributes, which hide `+`) and `ls -lde` lists an
+/// ACL entry after the first line or fails, or `getfacl -s` lists an ACL on
+/// either (BusyBox `ls` never marks one). A folder's default ACL reaches
 /// the copy, and `chmod` would raise its mask.
 ///
 /// Then an existing target is written over in place, which keeps its mode,
@@ -233,7 +234,14 @@ if [ -n "$mode" ] && [ -n "$group" ]; then keep=1; fi
 if [ -L "$like" ] || [ ! -f "$like" ]; then keep=; fi
 for listed in "$like" "$copy"; do
 listing=$(ls -ld -- "$listed" 2>/dev/null) || listing=
-case $listing in ''|??????????[+@]*) keep= ;; esac
+nl='
+'
+case $listing in
+''|??????????+*) keep= ;;
+??????????@*)
+acl_listing=$(ls -lde -- "$listed" 2>/dev/null) || acl_listing=$nl
+case $acl_listing in *"$nl"*) keep= ;; esac ;;
+esac
 if command -v getfacl >/dev/null 2>&1 && [ -n "$(getfacl -s -- "$listed" 2>/dev/null)" ]; then keep=; fi
 done
 if [ -n "$keep" ] && [ "$group" != "$tmp_group" ] && ! chgrp -- "$group" "$copy" 2>/dev/null; then

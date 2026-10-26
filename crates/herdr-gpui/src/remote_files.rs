@@ -540,7 +540,7 @@ fn fetch_copy(
         cache::create_private_dirs(folder)?;
     }
     let part = cache::part_path(&local);
-    let fetched = write_part(io, remote, &part).inspect_err(|_| remove_part(&part))?;
+    let fetched = write_part(io, remote, &part)?;
     // Checked as late as possible: a save made while the fetch ran is kept.
     if let Some(synced) = keep_edits_since
         && edited_since(&local, synced).inspect_err(|_| remove_part(&part))?
@@ -735,9 +735,17 @@ fn remove_kept(kept: &Path) {
     }
 }
 
+/// Fetches `remote` into a new file at `part`. A file already at `part` is
+/// left as it is, since it may be the copy itself; only a part this call
+/// created is removed when the fetch fails.
 fn write_part(io: &Io, remote: &RemotePath, part: &Path) -> Result<Fetched> {
     let mut file = cache::create_private_file(part)?;
-    (io.fetch)(remote, &mut file).map_err(Error::Fetch)
+    (io.fetch)(remote, &mut file)
+        .map_err(Error::Fetch)
+        .inspect_err(|_| {
+            drop(file);
+            remove_part(part);
+        })
 }
 
 fn remove_part(part: &Path) {
