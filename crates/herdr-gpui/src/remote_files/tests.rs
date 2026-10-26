@@ -18,6 +18,8 @@ mod missing_dialog;
 mod queries;
 mod raw_join;
 mod raw_join_folders;
+#[cfg(windows)]
+mod refetch_whole;
 mod saves;
 mod windows_names;
 

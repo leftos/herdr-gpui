@@ -220,6 +220,13 @@ pub(super) fn kept_path(local: &Path) -> PathBuf {
     beside(local, "kept")
 }
 
+/// Where a re-fetch moves the folder copy at `local` aside, whole, before
+/// the new folder takes its place, and removes it from once that is done:
+/// beside it, under a name no other fetch of this process has.
+pub(super) fn retired_path(local: &Path) -> PathBuf {
+    beside(local, "old")
+}
+
 /// The readable name a copy named `name` is kept under for good beside the
 /// folder that took its place: `<name>.kept` for the first (`n` of 1), else
 /// `<name>.<n>.kept`. `name` is cut on a character boundary, keeping its
