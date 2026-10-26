@@ -371,7 +371,7 @@ fn fetch_folder(
         Ok(filled) => filled,
         Err(error) => {
             remove_file(&archive);
-            remove_dir(&staging);
+            remove_dir(&staging, "staging");
             return Err(error);
         }
     };
@@ -421,18 +421,16 @@ fn fill(
     // The archive is no use once unpacked; failing to remove it is not.
     remove_file(transfer.archive);
     let kept = if transfer.local.is_dir() {
-        std::fs::remove_dir_all(transfer.local).map_err(|source| Error::FolderInUse {
+        replace_dir(transfer.staging, transfer.local)?;
+        None
+    } else {
+        let kept = set_aside(transfer.local, transfer.file_synced)?;
+        std::fs::rename(transfer.staging, transfer.local).map_err(|source| Error::Cache {
             path: transfer.local.to_owned(),
             source,
         })?;
-        None
-    } else {
-        set_aside(transfer.local, transfer.file_synced)?
+        kept
     };
-    std::fs::rename(transfer.staging, transfer.local).map_err(|source| Error::Cache {
-        path: transfer.local.to_owned(),
-        source,
-    })?;
     let meta = std::fs::metadata(transfer.local)
         .and_then(|meta| watch::Meta::of(&meta))
         .map_err(|source| Error::Cache {
@@ -445,6 +443,30 @@ fn fill(
         links_skipped: extracted.links_skipped,
         kept,
     })
+}
+
+/// Puts the folder extracted at `staging` in place of the folder copy at
+/// `local`. The old copy moves aside whole first, so a file in it that
+/// another application holds open stops the swap before anything is
+/// removed; the old copy is removed only once the new folder is in place,
+/// and moved back if that fails. Blocking.
+fn replace_dir(staging: &Path, local: &Path) -> Result<()> {
+    let retired = cache::retired_path(local);
+    std::fs::rename(local, &retired).map_err(|source| Error::FolderInUse {
+        path: local.to_owned(),
+        source,
+    })?;
+    if let Err(source) = std::fs::rename(staging, local) {
+        if let Err(error) = std::fs::rename(&retired, local) {
+            tracing::warn!(%error, retired = %retired.display(), "Old remote folder copy not moved back after a failed swap");
+        }
+        return Err(Error::Cache {
+            path: local.to_owned(),
+            source,
+        });
+    }
+    remove_dir(&retired, "old copy");
+    Ok(())
 }
 
 /// Clears the place of a file copy at `local`, from before the host's path
@@ -578,10 +600,12 @@ fn remove_file(path: &Path) {
     }
 }
 
-fn remove_dir(path: &Path) {
+/// Removes the folder at `path`, logging a failure as the remote folder's
+/// `what` (its staging, its old copy) not removed.
+fn remove_dir(path: &Path, what: &str) {
     if let Err(error) = std::fs::remove_dir_all(path)
         && error.kind() != io::ErrorKind::NotFound
     {
-        tracing::warn!(%error, path = %path.display(), "Remote folder staging not removed");
+        tracing::warn!(%error, path = %path.display(), "Remote folder {what} not removed");
     }
 }

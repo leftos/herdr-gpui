@@ -7,7 +7,7 @@ use gpui::Modifiers;
 use herdr_client::{ProbedFolder, RemoteFileError};
 use std::io::Write;
 
-const PATH: &str = "/home/me/src";
+pub(super) const PATH: &str = "/home/me/src";
 
 /// A host whose path is a folder, so a file fetch refuses it.
 pub(super) fn not_a_file() -> herdr_client::Result<&'static [u8]> {
@@ -54,11 +54,11 @@ fn one_link_skipped() -> herdr_client::Result<ProbedFolder> {
     with_links(1)
 }
 
-fn probed() -> herdr_client::Result<ProbedFolder> {
+pub(super) fn probed() -> herdr_client::Result<ProbedFolder> {
     sized(4096, Some([7; 32]))
 }
 
-fn changed() -> herdr_client::Result<ProbedFolder> {
+pub(super) fn changed() -> herdr_client::Result<ProbedFolder> {
     sized(4096, Some([9; 32]))
 }
 
@@ -129,7 +129,7 @@ fn tar_gz_with_link() -> Vec<u8> {
 }
 
 /// A click on `path` in a pane on the fake host, and the work it starts.
-fn click(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) {
+pub(super) fn click(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) {
     view.update(cx, |view, cx| {
         view.open_remote_file(remote(path), None, None, None, cx)
     });
@@ -157,7 +157,7 @@ fn press(cx: &mut VisualTestContext, id: &'static str) {
 }
 
 /// Opens the waiting folder question and presses its button `id`.
-fn answer(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, id: &'static str) {
+pub(super) fn answer(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, id: &'static str) {
     poll(view, cx);
     assert_eq!(
         page(view, cx),
@@ -168,7 +168,7 @@ fn answer(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, id: &'static s
 }
 
 /// A click on `path` whose question is answered with Copy.
-fn click_and_copy(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) {
+pub(super) fn click_and_copy(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, path: &str) {
     click(view, cx, path);
     answer(view, cx, "remote-folder-copy");
 }
@@ -178,7 +178,7 @@ fn shown(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<Vec<S
     view.read_with(cx, |view, _| view.remote_folder_text())
 }
 
-fn flash_text(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<String> {
+pub(super) fn flash_text(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |view, _| {
         view.flash.as_ref().map(|(flash, _)| flash.text.to_string())
     })
@@ -699,7 +699,7 @@ fn kept_beside(local: &Path) -> Vec<PathBuf> {
 
 /// Everything in the folder holding the copy at `local`, so a file left
 /// under a transient name shows.
-fn held_beside(local: &Path) -> std::collections::BTreeSet<PathBuf> {
+pub(super) fn held_beside(local: &Path) -> std::collections::BTreeSet<PathBuf> {
     std::fs::read_dir(local.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().path())
