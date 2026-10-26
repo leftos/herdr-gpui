@@ -68,6 +68,8 @@ printf '%s\n' "$files""#,
 /// folder to its physical path first, so the archive holds the target's tree
 /// rather than the link, while links inside the tree stay links. `/`, or a
 /// link to it, is refused: extracting it would replace the host's whole tree.
+/// `COPYFILE_DISABLE=1` stops macOS `tar` adding an AppleDouble `._` entry
+/// for every file carrying extended attributes; other `tar`s ignore it.
 pub(super) fn posix_archive_script(path: &str) -> String {
     format!(
         r#"{assign}
@@ -77,6 +79,7 @@ path=$(CDPATH= cd -P -- "$path" && pwd -P) || exit {NOT_A_FILE_EXIT}
 if [ "$path" = / ]; then exit {NOT_A_FILE_EXIT}; fi
 dir=${{path%/*}}; base=${{path##*/}}
 if [ -z "$dir" ]; then dir=/; fi
+COPYFILE_DISABLE=1; export COPYFILE_DISABLE
 exec tar -czf - -C "$dir" -- "$base""#,
         assign = path_assignment(path),
     )

@@ -124,6 +124,18 @@ fn posix_archive_resolves_the_path_before_refusing_the_root() {
 }
 
 #[test]
+fn posix_archive_tells_macos_tar_to_leave_out_appledouble_entries() {
+    let script = scripts::posix_archive_script("/tree");
+    let disable = script
+        .find("\nCOPYFILE_DISABLE=1; export COPYFILE_DISABLE\n")
+        .expect("the script sets and exports COPYFILE_DISABLE=1");
+    let stream = script
+        .find("exec tar -czf - -C \"$dir\" -- \"$base\"")
+        .unwrap();
+    assert!(disable < stream, "COPYFILE_DISABLE is set before tar runs");
+}
+
+#[test]
 fn powershell_folder_scripts_quote_the_path_as_a_literal() {
     let probe = scripts::powershell_probe_script(HOSTILE_NAME);
     assert!(probe.contains(&format!(
