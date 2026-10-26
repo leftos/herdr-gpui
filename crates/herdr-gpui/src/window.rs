@@ -7,18 +7,16 @@ mod annotate;
 mod announcement;
 mod backdrop;
 pub(crate) mod chrome_focus;
-mod clipboard;
+pub(crate) mod clipboard;
 #[cfg(target_os = "macos")]
-pub(crate) use clipboard::macos::{
-    Error as ClipboardHelperError, run_helper as run_clipboard_helper,
-};
+pub(crate) use clipboard::macos::run_helper as run_clipboard_helper;
 mod commands;
 mod config_diagnostic;
 mod construct;
 mod copy_mode;
 mod device_themes;
 mod double_shift;
-mod file_drop;
+pub(crate) mod file_drop;
 mod file_links;
 #[cfg(test)]
 pub(crate) use file_links::opened;
@@ -61,7 +59,7 @@ mod tab_strip;
 mod tab_tear;
 mod toasts;
 mod transfers;
-mod wsl_drop;
+pub(crate) mod wsl_drop;
 mod zen;
 #[cfg(test)]
 pub(crate) use transfers::tests::Peer as MockPeer;
@@ -131,6 +129,9 @@ pub(crate) struct HerdrWindow {
     pub(crate) app_update_notes_scroll: ScrollHandle,
     /// A tab torn off another window, waiting for its host to be listed.
     pub(crate) arrival: Option<tab_tear::TornTab>,
+    /// The activity bar's Automations section: every host's
+    /// `herdr-automate` scripts and runs.
+    pub(crate) automations: crate::automations::Automations,
     pub(crate) avatars: Option<avatars::Avatars>,
     /// The picture and platform appearance `[backdrop]` asks for.
     pub(crate) backdrop: backdrop::State,
@@ -140,6 +141,8 @@ pub(crate) struct HerdrWindow {
     pub(crate) browser: crate::browser::Browser,
     pub(crate) catalog: endpoint::Catalog,
     pub(crate) cell_width: f32,
+    /// Native views of the `herdr-acp` chats in this daemon's panes.
+    pub(crate) chats: crate::chat::Chats,
     /// Snapshots of checkouts taken at agent turns, and the dialog listing them.
     pub(crate) checkpoints: crate::checkpoint::Checkpoints,
     /// The chrome region whose controls take Tab; see `chrome_focus`.
@@ -204,6 +207,9 @@ pub(crate) struct HerdrWindow {
     pub(crate) flash: Option<(Flash, std::time::Instant)>,
     pub(crate) focus: FocusHandle,
     pub(crate) git: git::Git,
+    /// Where the titlebar's Git button last painted. The window owns it so a
+    /// shortcut and a click open the Git menu at the same place.
+    pub(crate) git_anchor: std::rc::Rc<std::cell::Cell<Point<Pixels>>>,
     /// Unknown keys in the GUI config, ignored but reported; follows `config`.
     pub(crate) gui_config_diagnostic: crate::config_diagnostic::ConfigDiagnostic,
     pub(crate) held_keys: crate::terminal::HeldKeys,
@@ -296,6 +302,9 @@ pub(crate) struct HerdrWindow {
     pub(crate) review_files_width: crate::panel_resize::PanelWidth,
     /// Each review tab's state, by its tab.
     pub(crate) reviews: std::collections::HashMap<crate::browser::TabId, crate::review::Review>,
+    /// Sandbox images this window was asked to build ahead of a dispatch.
+    #[cfg(feature = "cloud")]
+    pub(crate) sandbox_image_builds: crate::cloud::image::Prebuilds,
     pub(crate) scrollbar_drag: Option<mouse::ScrollbarDrag>,
     /// The activity bar's Security section: Dependabot alerts.
     pub(crate) security: crate::security::Security,
@@ -595,6 +604,7 @@ impl HerdrWindow {
         self.save_group_layouts(cx);
         self.poll_browser(window, cx);
         self.poll_remote_browser(window, cx);
+        self.poll_chats(window, cx);
         self.offer_browser_skill(window, cx);
         self.poll_sessions(cx);
         self.flush_scrollbar(cx);
@@ -662,6 +672,7 @@ impl HerdrWindow {
         self.poll_devices_overview(cx);
         self.poll_overview(cx);
         self.poll_security(cx);
+        self.poll_automations(cx);
         if self.update_system_load() {
             cx.notify();
         }

@@ -6,7 +6,8 @@ use super::{Flash, HerdrWindow, layout_save::LayoutSaves};
 use crate::{
     app::InitialAppearance,
     config::{
-        Config, FONT_SIZE_RANGE, FONT_SIZE_STEP, LayoutMode, TabLayoutMode, preferences::Preference,
+        ChatLayoutMode, Config, FONT_SIZE_RANGE, FONT_SIZE_STEP, LayoutMode, TabLayoutMode,
+        preferences::Preference,
     },
     controls::{self, Command},
     endpoint::Step,
@@ -92,6 +93,46 @@ impl HerdrWindow {
         cx.spawn(async move |_, _| {
             if let Err(error) = save.await {
                 tracing::warn!(%error, "Could not save the tab layout");
+            }
+        })
+        .detach();
+    }
+
+    /// Switches how chat views draw, then keeps it as [`Self::set_layout`]
+    /// keeps the sidebar's.
+    pub(crate) fn set_chat_layout(&mut self, mode: ChatLayoutMode, cx: &mut Context<Self>) {
+        self.set_chat_layout_with(
+            mode,
+            |mode| Config::save_preference(Preference::ChatLayout(mode)),
+            cx,
+        );
+    }
+
+    /// `save` persists the choice; tests pass one that leaves the real
+    /// config alone.
+    pub(crate) fn set_chat_layout_with(
+        &mut self,
+        mode: ChatLayoutMode,
+        save: impl FnOnce(ChatLayoutMode) -> crate::Result<()> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if self.config.chat.layout == mode {
+            return;
+        }
+        self.config.chat.layout = mode;
+        if cx.has_global::<InitialAppearance>() {
+            cx.global_mut::<InitialAppearance>().config.chat.layout = mode;
+        }
+        self.chats.relayout(mode);
+        cx.notify();
+        let saves = cx.default_global::<LayoutSaves>().chat.clone();
+        saves.want(mode);
+        let save = cx
+            .background_executor()
+            .spawn(async move { saves.write_latest(save) });
+        cx.spawn(async move |_, _| {
+            if let Err(error) = save.await {
+                tracing::warn!(%error, "Could not save the chat layout");
             }
         })
         .detach();
@@ -343,6 +384,33 @@ impl HerdrWindow {
                 self.open_orchestrator(window, cx);
                 return;
             }
+            Command::ReviewChanges => {
+                self.open_review(window, cx);
+                return;
+            }
+            Command::GitMenu => {
+                // Where the titlebar's Git button last painted, so the
+                // shortcut opens the menu where clicking the button does.
+                // Zen mode hides the button and leaves that point stale, so
+                // the menu drops from the top-right corner it sits near.
+                let anchor = if self.zen_active() {
+                    gpui::point(window.viewport_size().width - gpui::px(24.), gpui::px(24.))
+                } else {
+                    self.git_anchor.get()
+                };
+                self.open_git_menu(anchor, window, cx);
+                return;
+            }
+            Command::ToggleAnnotate => {
+                #[cfg(any(target_os = "macos", windows))]
+                self.toggle_shown_annotating(window, cx);
+                #[cfg(not(any(target_os = "macos", windows)))]
+                self.show_flash(
+                    Flash::warning("Annotating pages needs macOS or Windows"),
+                    cx,
+                );
+                return;
+            }
             Command::SplitEditor => {
                 self.split_active_group(window, cx);
                 return;
@@ -353,6 +421,10 @@ impl HerdrWindow {
             }
             Command::OpenPx0 => {
                 self.open_px0(None, window, cx);
+                return;
+            }
+            Command::RemotePair => {
+                self.open_remote_pairing(window, cx);
                 return;
             }
             Command::InstallBrowserSkill => {
@@ -738,10 +810,10 @@ impl HerdrWindow {
             .debug_selector(|| "agent-skill-offer".into())
             .child(div().p(px(8.)).child("Let agents show you pages?"))
             .child(div().p(px(8.)).child(
-                "Agents in your panes can open pages and HTML drafts in browser tabs here, and read the notes you pin on them. A skill teaches them how.",
+                "Agents in your panes can open pages and HTML drafts in browser tabs here, read the notes you pin on them, and write automations for you to approve. Skills teach them how.",
             ))
             .child(div().p(px(8.)).text_color(rgb(theme.muted)).child(
-                "Install writes herdr-gpui-browser/SKILL.md into ~/.claude/skills and ~/.agents/skills, whichever exist, and keeps it up to date. A skill of that name you wrote yourself is left alone. Remove it any time in Settings.",
+                "Install writes herdr-gpui-browser/SKILL.md and herdr-automations/SKILL.md into ~/.claude/skills and ~/.agents/skills, whichever exist, and keeps them up to date. A skill of either name you wrote yourself is left alone. Remove them any time in Settings.",
             ))
             .child(
                 div()

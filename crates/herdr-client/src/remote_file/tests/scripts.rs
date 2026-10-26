@@ -337,10 +337,16 @@ fn public_functions_refuse_an_invalid_target() {
     let cancelled = AtomicBool::new(false);
     let posix = file("-oProxyCommand=x", RemoteShell::Posix, "/f");
     let fetched = fetch_remote_file(posix, Vec::new(), 1, &cancelled);
-    assert!(matches!(fetched, Err(crate::Error::InvalidSshTarget)));
+    assert!(matches!(
+        fetched,
+        Err(crate::Error::Ssh(crate::ssh::Error::InvalidTarget))
+    ));
     let windows = file("-oProxyCommand=x", RemoteShell::PowerShell, "C:\\f");
     let pushed = push_remote_file(windows, Expect::Any, Access::Keep, 0, &[][..], &cancelled);
-    assert!(matches!(pushed, Err(crate::Error::InvalidSshTarget)));
+    assert!(matches!(
+        pushed,
+        Err(crate::Error::Ssh(crate::ssh::Error::InvalidTarget))
+    ));
 }
 
 /// Every client, Windows included, runs a host's scripts through its own

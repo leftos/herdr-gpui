@@ -17,6 +17,9 @@ pub struct Changed;
 pub struct SearchInput {
     pub focus: FocusHandle,
     placeholder: String,
+    /// What a screen reader calls the field when its placeholder does not
+    /// name it, as when a caption beside the field does.
+    label: Option<SharedString>,
     edit: Editing,
     font: FontConfig,
     theme: Theme,
@@ -144,6 +147,7 @@ impl SearchInput {
         Self {
             focus: cx.focus_handle(),
             placeholder: "Search themes...".into(),
+            label: None,
             edit: Editing::default(),
             font: Config::default().ui,
             theme: Theme::default(),
@@ -182,6 +186,25 @@ impl SearchInput {
         &self.edit.text
     }
 
+    /// Replaces the text with the cursor at byte `cursor`, moved back to a
+    /// character boundary, and nothing selected.
+    pub(crate) fn set_text_at(&mut self, text: &str, cursor: usize, cx: &mut Context<Self>) {
+        let text = single_line(text);
+        let mut cursor = cursor.min(text.len());
+        while !text.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        let changed = self.edit.text != text;
+        self.edit = Editing {
+            anchor: cursor,
+            cursor,
+            text,
+            ..Editing::default()
+        };
+        self.selecting = false;
+        self.did_edit(changed, cx);
+    }
+
     pub(super) fn set_text_selected(&mut self, text: &str, cx: &mut Context<Self>) {
         let text = single_line(text);
         let changed = self.edit.text != text;
@@ -202,6 +225,18 @@ impl SearchInput {
         }
         self.placeholder = value.into();
         self.layout = None;
+        cx.notify();
+    }
+
+    /// Select the whole text, as a native field does when Tab moves into it.
+    pub(crate) fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.edit.anchor = 0;
+        self.edit.cursor = self.edit.text.len();
+        cx.notify();
+    }
+
+    pub(crate) fn set_label(&mut self, label: &'static str, cx: &mut Context<Self>) {
+        self.label = Some(label.into());
         cx.notify();
     }
 
@@ -524,9 +559,12 @@ impl Render for SearchInput {
                         .role(Role::TextInput)
                         .aria_value(SharedString::from(self.edit.text.clone()))
                 };
-                field.when(!self.placeholder.is_empty(), |field| {
-                    field.aria_label(SharedString::from(self.placeholder.clone()))
-                })
+                match &self.label {
+                    Some(label) => field.aria_label(label.clone()),
+                    None => field.when(!self.placeholder.is_empty(), |field| {
+                        field.aria_label(SharedString::from(self.placeholder.clone()))
+                    }),
+                }
             })
             .w_full()
             .when(self.framed, |field| {

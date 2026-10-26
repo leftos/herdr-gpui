@@ -13,6 +13,9 @@ pub(crate) enum Page {
     #[cfg(feature = "coder")]
     AddCoder,
     AddDevice,
+    /// Add Device's tiles of the cloud providers its rail leaves out.
+    #[cfg(feature = "cloud")]
+    AddProvider,
     /// Picking a WSL distribution to save as a device.
     AddWsl,
     /// The one-time offer to install the agent skill for browser tabs.
@@ -20,6 +23,8 @@ pub(crate) enum Page {
     /// The Linux window's application menu, from the native menu definitions.
     Application,
     AppUpdate,
+    /// Approving an automation script, or enabling automations on a host.
+    Automation,
     /// Reviewing, then following, a move of the pane menu's pane to another
     /// device.
     CarryPane,
@@ -76,6 +81,11 @@ pub(crate) enum Page {
     /// A remote file's host changed since its copy was synced, so a save
     /// was not uploaded.
     RemoteConflict,
+    /// Pairing a phone for remote control: the QR, then the approval.
+    RemoteControl,
+    /// The title bar's list of paired phones, to disconnect one or pair
+    /// another.
+    RemoteDevices,
     /// An SSH path click whose path a raw wrap ran onto the next row; asks
     /// which path to open before anything is fetched.
     RemoteJoin,
@@ -90,6 +100,8 @@ pub(crate) enum Page {
     RenameDevice,
     RenamePane,
     RenameTab,
+    /// Confirming a paired remote control device should be revoked.
+    RevokeDevice,
     /// Local sessions and remote devices, with the state of each.
     Sessions,
     Tab,
@@ -145,6 +157,9 @@ pub(crate) enum WorkspaceMenuAction {
     Script(crate::worktree_scripts::ScriptKind),
     /// Show the repository's issues in the activity bar.
     Orchestrator,
+    /// Build the repository's sandbox images ahead of a dispatch.
+    #[cfg(feature = "cloud")]
+    SandboxImages,
 }
 
 impl Page {
@@ -169,6 +184,7 @@ impl Page {
                 | Self::RemoveWsl
                 | Self::Git
                 | Self::GitCommit
+                | Self::RemoteDevices
                 | Self::PrReview
                 | Self::PrComment
                 | Self::PrMerge
@@ -211,6 +227,8 @@ impl WorkspaceMenuAction {
             Self::Checkpoints => "icons/refresh.svg",
             Self::FanOut => "icons/fan-out.svg",
             Self::Orchestrator => "icons/github.svg",
+            #[cfg(feature = "cloud")]
+            Self::SandboxImages => "icons/cloud/container.svg",
             Self::Script(crate::worktree_scripts::ScriptKind::Setup) => "icons/refresh.svg",
             Self::Script(_) => "icons/play.svg",
             Self::PullRequest => return None,

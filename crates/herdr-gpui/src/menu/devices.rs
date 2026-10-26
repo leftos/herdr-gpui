@@ -3,10 +3,13 @@
 //! state; connection ownership stays in `endpoint`.
 mod activity_card;
 mod add_device;
+#[cfg(feature = "cloud")]
+mod catalog;
 #[cfg(feature = "coder")]
 pub(super) mod coder;
 pub(crate) use add_device::enter;
 mod discover;
+mod error;
 mod host_key;
 mod host_menu;
 mod local_network;
@@ -16,6 +19,7 @@ mod setup;
 mod wsl;
 
 pub(super) use add_device::Setup;
+pub(crate) use error::Error;
 pub(crate) use host_menu::HostMenu;
 pub(super) use wsl::WslSetup;
 
@@ -111,6 +115,18 @@ impl HerdrWindow {
                 crate::cloud::CloudProvider::Daytona => {
                     self.config.daytona.api_url.is_some() || var("HERDR_DAYTONA_API_URL").is_some()
                 }
+                #[cfg(feature = "opensandbox")]
+                crate::cloud::CloudProvider::OpenSandbox => {
+                    self.config.opensandbox.api_url.is_some()
+                        || var("HERDR_OPENSANDBOX_API_URL").is_some()
+                }
+                #[cfg(feature = "sprites")]
+                crate::cloud::CloudProvider::Sprites => {
+                    self.config.sprites.api_url.is_some() || var("HERDR_SPRITES_API_URL").is_some()
+                }
+                // A local engine has no account; it is set up in Settings.
+                #[cfg(feature = "container")]
+                crate::cloud::CloudProvider::Container => false,
                 // Has no account to configure; it is set up in Settings.
                 #[cfg(feature = "railway")]
                 crate::cloud::CloudProvider::Railway => false,
@@ -125,7 +141,7 @@ impl HerdrWindow {
             return true;
         }
         #[cfg(feature = "cloud")]
-        if matches!(self.menu.page, Some(Page::AddCloud(_))) {
+        if matches!(self.menu.page, Some(Page::AddCloud(_) | Page::AddProvider)) {
             return true;
         }
         false
@@ -140,6 +156,10 @@ impl HerdrWindow {
         #[cfg(feature = "coder")]
         if self.menu.page == Some(Page::AddCoder) {
             return Some(self.render_add_coder(compact, cx).into_any_element());
+        }
+        #[cfg(feature = "cloud")]
+        if self.menu.page == Some(Page::AddProvider) {
+            return Some(self.render_add_provider(compact, cx).into_any_element());
         }
         #[cfg(feature = "cloud")]
         if let Some(Page::AddCloud(provider)) = self.menu.page {

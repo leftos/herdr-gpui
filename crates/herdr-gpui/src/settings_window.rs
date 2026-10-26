@@ -14,6 +14,7 @@ mod layouts;
 mod navigation;
 mod pages;
 pub(crate) use layouts::{apply_loaded_layout, layout_load_revision};
+pub(crate) use pages::remote_control::open as open_remote;
 #[cfg(all(feature = "integration-test", target_os = "macos"))]
 mod native;
 mod persistence;
@@ -164,6 +165,8 @@ struct SettingsWindow {
     plugins: controls::plugins::Plugins,
     code: controls::code::CodeSettings,
     px0: controls::px0::Px0Settings,
+    chat_env: controls::chat_env::ChatEnvSettings,
+    remote: pages::remote_control::RemoteSettings,
     /// The open override dropdown, if any; its list renders inside its button.
     dropdown: Option<ui::Dropdown>,
     /// The number field being typed into, if any.
@@ -239,10 +242,19 @@ struct SettingsWindow {
     boat_card: Option<cloud_devices::BoatCard>,
     #[cfg(feature = "coder")]
     coder_card: Option<cloud_devices::CoderCard>,
+    #[cfg(feature = "container")]
+    container_card: Option<cloud_devices::ContainerCard>,
     #[cfg(feature = "daytona")]
     daytona_card: Option<cloud_devices::DaytonaCard>,
+    #[cfg(feature = "opensandbox")]
+    opensandbox_card: Option<cloud_devices::OpenSandboxCard>,
     #[cfg(feature = "railway")]
     railway_card: Option<cloud_devices::RailwayCard>,
+    /// Sandbox images, for the cards of providers that hold them.
+    #[cfg(any(feature = "container", feature = "daytona"))]
+    sandbox_images: cloud_devices::SandboxImages,
+    #[cfg(feature = "sprites")]
+    sprites_card: Option<cloud_devices::SpritesCard>,
     theme_loading: bool,
     theme_waiting: bool,
     theme_light: bool,
@@ -316,6 +328,8 @@ impl SettingsWindow {
             plugins: controls::plugins::Plugins::new(cx),
             code: Default::default(),
             px0: Default::default(),
+            chat_env: Default::default(),
+            remote: Default::default(),
             dropdown: None,
             number_edit: None,
             number_preview: None,
@@ -369,10 +383,18 @@ impl SettingsWindow {
             boat_card: None,
             #[cfg(feature = "coder")]
             coder_card: None,
+            #[cfg(feature = "container")]
+            container_card: None,
             #[cfg(feature = "daytona")]
             daytona_card: None,
+            #[cfg(feature = "opensandbox")]
+            opensandbox_card: None,
             #[cfg(feature = "railway")]
             railway_card: None,
+            #[cfg(any(feature = "container", feature = "daytona"))]
+            sandbox_images: Default::default(),
+            #[cfg(feature = "sprites")]
+            sprites_card: None,
             theme_loading: false,
             theme_waiting: false,
             theme_light: false,
@@ -671,6 +693,14 @@ impl SettingsWindow {
             self.open_code_page(window, cx);
             self.open_px0_settings(cx);
         }
+        if section == Section::General {
+            self.open_chat_env_settings(cx);
+        }
+        if section == Section::RemoteControl {
+            self.open_remote_control(cx);
+        } else {
+            self.close_remote_control();
+        }
         self.body_scroll.set_offset(Point::default());
         window.focus(&self.focus, cx);
         if section == Section::Integrations {
@@ -700,6 +730,7 @@ impl Render for SettingsWindow {
                 Section::Integrations => self.render_integration_controls(cx),
                 Section::Plugins => self.render_plugin_controls(cx),
                 Section::Code => self.render_code_controls(window, cx),
+                Section::RemoteControl => self.render_remote_control(cx),
                 #[cfg(feature = "cloud")]
                 Section::CloudDevices => self.render_cloud_devices(cx),
                 _ => self.render_controls(window, cx),

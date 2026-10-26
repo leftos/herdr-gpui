@@ -62,10 +62,11 @@ impl HerdrWindow {
         let background = rgb(theme.surface).blend(rgba(0xffffff1a));
         let status = self.git.status();
         let running = self.git.running().is_some();
+        let anchor = self.git_anchor.clone();
         let pr = self.git_pull_request().map(|pr| {
             (
                 format!("#{}", pr.number),
-                pr.color(theme),
+                crate::pull_request::color(&pr, theme),
                 pr.additions,
                 pr.deletions,
                 pr.url.clone(),
@@ -178,6 +179,7 @@ impl HerdrWindow {
                     div()
                         .id("titlebar-git")
                         .debug_selector(|| "titlebar-git".into())
+                        .relative()
                         .flex()
                         .items_center()
                         .gap(px(4.))
@@ -205,6 +207,15 @@ impl HerdrWindow {
                                 .size(px(12.))
                                 .flex_none()
                                 .text_color(rgb(theme.muted)),
+                        )
+                        .child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, _, _| anchor.set(bounds.center()),
+                            )
+                            .absolute()
+                            .inset_0()
+                            .size_full(),
                         )
                         .on_mouse_down(
                             MouseButton::Left,
@@ -289,13 +300,16 @@ impl HerdrWindow {
     /// What ends the bar: git actions, the account, and the window controls
     /// a client-decorated window draws.
     fn titlebar_end(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let image = self.pr_profile().and_then(|p| p.avatar.clone());
+        let image = self
+            .pr_profile()
+            .and_then(|profile| self.menu.github_avatars.get(&profile.avatar_url));
         let attention = self.github_needs_attention();
         div()
             .flex()
             .flex_none()
             .items_center()
             .children(self.render_git_button(cx))
+            .children(self.remote_indicator(cx))
             .child(
                 div()
                     .debug_selector(|| "titlebar-account-slot".into())
@@ -542,6 +556,9 @@ mod tests {
         size,
     };
 
+    /// A signed-in fixture account's picture address, shown without loading it.
+    pub(super) const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1";
+
     /// The fixture window with Herdr's tab bar at the bottom, so it keeps the
     /// full-width header these tests measure.
     pub(crate) fn header_window(
@@ -594,10 +611,14 @@ mod tests {
                         };
                         view.menu.github.failed = state == 1;
                         if let Some(profile) = view.menu.github.profile.as_mut() {
-                            profile.avatar = Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                                gpui::ImageFormat::Svg,
-                                include_bytes!("../../../assets/icons/user.svg").to_vec(),
-                            )));
+                            profile.avatar_url = AVATAR_URL.into();
+                            view.menu.github_avatars.show(
+                                AVATAR_URL,
+                                std::sync::Arc::new(gpui::Image::from_bytes(
+                                    gpui::ImageFormat::Svg,
+                                    include_bytes!("../../../assets/icons/user.svg").to_vec(),
+                                )),
+                            );
                         }
                         cx.notify();
                     });
@@ -687,6 +708,8 @@ mod tests {
 
 #[cfg(test)]
 mod git_button_tests;
+#[cfg(test)]
+mod git_command_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[allow(clippy::unwrap_used)]
@@ -734,10 +757,14 @@ mod native_chrome_tests {
                     view.update(cx, |view, cx| {
                         view.menu.github = crate::github::Auth::connected_fixture();
                         if let Some(profile) = view.menu.github.profile.as_mut() {
-                            profile.avatar = Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                                gpui::ImageFormat::Svg,
-                                include_bytes!("../../../assets/icons/user.svg").to_vec(),
-                            )));
+                            profile.avatar_url = super::tests::AVATAR_URL.into();
+                            view.menu.github_avatars.show(
+                                super::tests::AVATAR_URL,
+                                std::sync::Arc::new(gpui::Image::from_bytes(
+                                    gpui::ImageFormat::Svg,
+                                    include_bytes!("../../../assets/icons/user.svg").to_vec(),
+                                )),
+                            );
                         }
                         cx.notify();
                     })

@@ -37,6 +37,8 @@ mod device_removing;
 #[cfg(test)]
 mod devices_layout;
 #[cfg(test)]
+mod gpu_line;
+#[cfg(test)]
 mod host_agents;
 #[cfg(test)]
 mod host_groups;
@@ -110,6 +112,8 @@ mod workspace_click_hover;
 mod workspace_menu;
 #[cfg(test)]
 mod workspace_menu_name;
+#[cfg(test)]
+mod worktree_identity;
 #[cfg(test)]
 mod worktree_note_trunk;
 #[cfg(test)]
@@ -539,6 +543,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
     HerdrWindow {
         _terminal_focus: terminal_focus,
         chrome_region: None,
+        chats: Default::default(),
         sound: Default::default(),
         bell: Default::default(),
         updater: crate::updater::Updater::default(),
@@ -595,6 +600,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         config_watch: None,
         config_load_revision: 0,
         git: Default::default(),
+        git_anchor: Default::default(),
         deliveries: Default::default(),
         terminal_notes: Default::default(),
         notes_width: crate::panel_resize::NOTES,
@@ -672,8 +678,11 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         pressed_terminal_link: None,
         links: Default::default(),
         terminal_mouse: None,
+        #[cfg(feature = "cloud")]
+        sandbox_image_builds: Default::default(),
         scrollbar_drag: None,
         security: Default::default(),
+        automations: Default::default(),
         security_search: crate::security::SecuritySearch::new(cx),
         split_drag: None,
         split_cursor: None,
@@ -688,6 +697,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         wake: crate::endpoint::WakeClock::new(
             std::time::Instant::now(),
             std::time::SystemTime::now(),
+            Default::default(),
         ),
         painter: Default::default(),
         backdrop: Default::default(),

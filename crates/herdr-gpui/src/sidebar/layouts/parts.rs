@@ -10,7 +10,7 @@
 use super::super::{
     cell::{RowContext, RowState},
     glyph_width, label_text, line_height,
-    row::{self, Counts, PrBadge, RowLift, removing_dot},
+    row::{self, Counts, PrBadge, RowIcon, RowLift, removing_dot},
     status_indicator,
     tokens::ResolvedToken,
 };
@@ -298,12 +298,8 @@ pub(super) fn mark(row: Div, state: RowState, colors: (Rgba, Rgba), theme: &Them
     }
 }
 
-pub(super) fn icon(path: impl Into<SharedString>, size: f32, color: u32) -> Svg {
-    svg()
-        .path(path)
-        .size(px(size))
-        .flex_none()
-        .text_color(rgb(color))
+pub(super) fn icon(path: impl Into<SharedString>, size: f32, color: u32) -> AnyElement {
+    crate::icons::icon(path, size, color)
 }
 
 /// The status dot, or the pulse that replaces it while a checkout is deleted.
@@ -356,6 +352,22 @@ pub(super) fn first_line(width: f32, element: impl IntoElement, cx: &RowContext<
 /// Uncommitted work, marked as the titlebar marks it.
 pub(super) fn teleported(key: &str, size: f32, theme: &Theme) -> Div {
     crate::icons::teleported(theme, size).debug_selector(|| format!("teleported-{key}"))
+}
+
+/// The branch glyph a linked worktree standing alone leads its name with,
+/// in the hue its icon carries. These rows have no avatar slot, so every
+/// other icon draws nothing.
+pub(super) fn worktree(key: &str, icon: &RowIcon, size: f32) -> Option<Div> {
+    let RowIcon::Worktree(hue) = icon else {
+        return None;
+    };
+    Some(
+        div()
+            .debug_selector(|| format!("worktree-icon-{key}"))
+            .size(px(size))
+            .flex_none()
+            .child(self::icon("icons/git-branch.svg", size, *hue)),
+    )
 }
 
 pub(super) fn dirty(key: &str, size: f32, theme: &Theme) -> Div {
