@@ -120,6 +120,7 @@ pub(crate) fn file_target(destination: &str) -> Option<RowTarget> {
                 line,
                 query: None,
                 explicit: true,
+                unjoined: None,
             });
         }
     }
@@ -138,6 +139,7 @@ pub(crate) fn file_target(destination: &str) -> Option<RowTarget> {
         line: line.or(fragment_line),
         query,
         explicit: true,
+        unjoined: None,
     })
 }
 
