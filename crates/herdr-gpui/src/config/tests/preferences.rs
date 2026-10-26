@@ -28,8 +28,8 @@ fn usage_visibility_preserves_settings_and_rejects_invalid_tables() -> anyhow::R
     let error = Config::save_usage_visibility_path(false, &path)
         .err()
         .context("invalid usage table must be rejected")?;
-    assert!(matches!(&error, Error::Path { path: failed, source }
-        if failed == &path && matches!(**source, Error::InvalidUsageTable)));
+    assert!(matches!(&error, crate::Error::Path { path: failed, source }
+        if failed == &path && matches!(**source, crate::Error::Settings(Error::InvalidUsageTable))));
     assert!(std::error::Error::source(&error).is_some());
     assert_eq!(fs::read_to_string(&path)?, "usage = false\n");
     Ok(())
@@ -183,6 +183,15 @@ fn rejects_invalid_settings() {
 
 #[test]
 fn features_are_opt_in_per_flag() -> anyhow::Result<()> {
+    assert!(
+        !Config::default().features.acp_chats,
+        "ACP chats are opt-in"
+    );
+    assert!(
+        Config::parse("[features]\nacp_chats = true")?
+            .features
+            .acp_chats
+    );
     assert!(!Config::parse("[features]")?.features.sidebar_hover_menu);
     let config = Config::parse("[features]\nsidebar_hover_menu = true")?;
     assert!(config.features.sidebar_hover_menu);
@@ -223,7 +232,7 @@ fn palette_defaults_overrides_and_validation() -> anyhow::Result<()> {
             "[palette]\nproject_roots = [{}]",
             vec!["'x'"; 17].join(",")
         )),
-        Err(Error::PaletteProjectRoots)
+        Err(crate::Error::Palette(crate::palette::Error::ProjectRoots))
     ));
     Ok(())
 }

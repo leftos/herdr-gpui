@@ -2,6 +2,9 @@
 use super::*;
 use herdr_client::{ClientEvent, SavedHost};
 
+#[cfg(feature = "container")]
+mod container_stop;
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod local_peer_warning;
 mod staged_notifications;
@@ -12,6 +15,16 @@ fn saved_profile_ids_are_the_catalog_ids_behind_ssh_endpoints() {
     assert_eq!(saved_profile_id(&format!("ssh:{id}")), Some(id));
     for endpoint in [id, LOCAL, "ssh:", "ssh:fixture", "ssh:../x"] {
         assert_eq!(saved_profile_id(endpoint), None, "{endpoint}");
+    }
+}
+
+impl Endpoint {
+    /// Attaches `handle` the way `connect` leaves the shown endpoint, with its
+    /// surface requested, for window tests that run without a daemon.
+    #[cfg(feature = "integration-test")]
+    pub(crate) fn attach_shown(&mut self, handle: ClientHandle) {
+        self.connection.handle = Some(handle);
+        self.initial_surface = true;
     }
 }
 

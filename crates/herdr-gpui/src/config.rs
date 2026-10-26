@@ -3,7 +3,7 @@
 //! to change daemon behavior. Managed defaults are refreshed from the binary;
 //! `config-gpui.local.toml` holds persistent user overrides.
 use crate::{
-    Error, Result,
+    Result,
     contrast::Contrast,
     keymap::{Binding, DaemonKeys, Keymap, PaneKeys},
 };
@@ -13,11 +13,15 @@ mod azure;
 pub(crate) mod backdrop;
 mod bitmap_fonts;
 mod boat;
+pub(crate) mod chat;
 mod cloud;
 mod coder;
+mod container;
+mod daemon;
 mod daytona;
 mod devices;
 mod edit;
+mod error;
 mod features;
 mod files;
 mod font_weight;
@@ -27,12 +31,15 @@ mod keybindings;
 mod layout;
 mod notifications;
 mod omarchy;
+mod opensandbox;
 mod option_as_alt;
 mod padding;
 pub(crate) mod preferences;
+pub(crate) use herdr_remote_control::app::config as remote;
 mod remote_files;
 pub(crate) mod sidebar;
 mod sidebar_style;
+mod sprites;
 pub(crate) mod status_bar;
 mod status_icons;
 pub(crate) mod tab_layout;
@@ -40,34 +47,32 @@ pub(crate) mod tab_layout;
     feature = "azure",
     feature = "boat",
     feature = "coder",
-    feature = "daytona"
+    feature = "container",
+    feature = "daytona",
+    feature = "opensandbox",
+    feature = "sprites"
 ))]
 mod table;
 pub(crate) use sidebar_style::parse_hex;
 mod theme;
 mod updates;
 pub(crate) mod watch;
+mod worktrees;
 mod zen;
 
 pub use accent::Accent;
 pub use agents_placement::AgentsPlacement;
-pub use azure::AzureConfig;
-#[cfg(feature = "azure")]
-pub(crate) use azure::AzureFields;
 pub use backdrop::{Backdrop, Material};
-pub use boat::BoatConfig;
-#[cfg(feature = "boat")]
-pub(crate) use boat::BoatFields;
+pub use chat::{ChatLauncher, ChatLayoutMode};
 pub use cloud::CloudConfig;
-pub use coder::CoderConfig;
-#[cfg(feature = "coder")]
-pub(crate) use coder::CoderFields;
-pub use daytona::DaytonaConfig;
-#[cfg(feature = "daytona")]
-pub(crate) use daytona::DaytonaFields;
+#[cfg(test)]
+use daemon::MAX_DAEMON_CONFIG_BYTES;
+pub(crate) use daemon::daemon_config_path;
+use daemon::{Daemon, daemon_settings};
 use devices::MAX_DEVICES;
 pub(crate) use devices::{DeviceSettings, KeybindingSource};
 pub(crate) use edit::{Layer, parse_value};
+pub(crate) use error::{Error, ThemeParseError};
 pub use features::{Feature, Features};
 use files::write_config;
 pub use font_weight::bold as bold_font_weight;
@@ -76,8 +81,29 @@ use fonts::FontSettings;
 #[cfg(any(test, feature = "integration-test"))]
 pub use fonts::symbol_fallbacks;
 pub use fonts::{FONT_SIZE_RANGE, FONT_SIZE_STEP, FontConfig};
+pub(crate) use github::MAX_ACCOUNTS;
 pub use github::{GitHubAccount, GitHubConfig};
-pub(crate) use github::{MAX_ACCOUNTS, valid_account_id, valid_owner};
+pub use herdr_remote::config::AzureConfig;
+#[cfg(feature = "azure")]
+pub(crate) use herdr_remote::config::AzureFields;
+pub use herdr_remote::config::BoatConfig;
+#[cfg(feature = "boat")]
+pub(crate) use herdr_remote::config::BoatFields;
+pub use herdr_remote::config::CoderConfig;
+#[cfg(feature = "coder")]
+pub(crate) use herdr_remote::config::CoderFields;
+pub use herdr_remote::config::ContainerConfig;
+#[cfg(feature = "container")]
+pub(crate) use herdr_remote::config::ContainerFields;
+pub use herdr_remote::config::DaytonaConfig;
+#[cfg(feature = "daytona")]
+pub(crate) use herdr_remote::config::DaytonaFields;
+pub use herdr_remote::config::OpenSandboxConfig;
+#[cfg(feature = "opensandbox")]
+pub(crate) use herdr_remote::config::OpenSandboxFields;
+pub use herdr_remote::config::SpritesConfig;
+#[cfg(feature = "sprites")]
+pub(crate) use herdr_remote::config::SpritesFields;
 pub use layout::{Density, Layout, LayoutMode, Style};
 pub(crate) use notifications::NotificationDelivery;
 pub use notifications::{
@@ -87,6 +113,7 @@ use notifications::{ClipboardToastSettings, NotificationSettings};
 pub use option_as_alt::{OptionAsAlt, OptionKeys};
 pub use padding::Padding;
 pub(crate) use padding::{Axis, MAX_PADDING, Side, Sides};
+pub use remote::RemoteConfig;
 pub use remote_files::RemoteFilesConfig;
 use remote_files::RemoteFilesSettings;
 use serde::Deserialize;
@@ -100,7 +127,7 @@ pub use status_bar::StatusBar;
 pub use status_icons::StatusIcons;
 use std::{
     collections::BTreeMap,
-    env, fs,
+    fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -142,6 +169,8 @@ pub struct Config {
     pub backdrop: Backdrop,
     pub bell: BellConfig,
     pub boat: BoatConfig,
+    /// What chats started from the app run with.
+    pub chat: chat::ChatConfig,
     /// Only the keys this GUI's own file sets, so Settings can tell an
     /// override from the Herdr value it shadows.
     pub(crate) clipboard_overrides: ClipboardToastSettings,
@@ -155,6 +184,8 @@ pub struct Config {
     /// Whether a workspace close shows its dialog when the check finds no
     /// unpublished work. Uncommitted or unpushed work always asks.
     pub confirm_close_workspace: bool,
+    /// How new containers on this computer's Docker or Podman engine are made.
+    pub container: ContainerConfig,
     /// How far the app's own marks and labels stand off its chrome.
     pub contrast: Contrast,
     pub daytona: DaytonaConfig,
@@ -191,12 +222,16 @@ pub struct Config {
     /// Where a link-modifier click on a printed file path opens it.
     pub open_files_in: FileTarget,
     pub open_links_in: LinkTarget,
+    /// The self-hosted OpenSandbox server whose sandboxes are devices.
+    pub opensandbox: OpenSandboxConfig,
     pub option_as_alt: OptionAsAlt,
     pub palette: crate::palette::PaletteConfig,
     /// The `[pane_keys]` table `keybindings` was built from, for the same
     /// reason.
     pub(crate) pane_keys: PaneKeys,
     pub(crate) px0: crate::px0::Config,
+    /// Remote control from a phone, through the `herdr-remote-control` daemon.
+    pub remote: RemoteConfig,
     /// Size limits for copying a folder printed in an SSH pane.
     pub remote_files: RemoteFilesConfig,
     /// Whether a linked worktree whose pull request is merged is removed, and
@@ -212,12 +247,18 @@ pub struct Config {
     /// The mark before a device's name in the sidebar, in the layouts that
     /// draw one: where the device runs and how it is reached.
     pub show_device_icons: bool,
+    /// The selected host's GPU and video memory in the status bar. Off by
+    /// default; see [`Self::gpu_sampled`].
+    pub show_gpu_load: bool,
     /// Ports each workspace listens on, in the sidebar and the status bar.
     pub show_listening_ports: bool,
     /// Latency and loss from this machine, by timed TCP connects, in the status bar.
     pub show_network_quality: bool,
     /// The repository owner's avatar, or the GitHub mark, before a space's name.
     pub show_repository_icons: bool,
+    /// Each host's GPU and video memory on a sidebar line under its CPU and
+    /// memory. Off by default; see [`Self::gpu_sampled`].
+    pub show_sidebar_gpu_load: bool,
     /// The search field at the top of the sidebar's spaces list.
     pub show_sidebar_search: bool,
     /// CPU and memory of the selected host in the status bar.
@@ -234,6 +275,8 @@ pub struct Config {
     pub smooth_scroll: bool,
     /// How loud agent notification sounds play.
     pub sound: SoundConfig,
+    /// The Fly Sprites account whose sprites are devices.
+    pub sprites: SpritesConfig,
     /// Which status bar items show, and how compactly.
     pub status_bar: StatusBar,
     /// The set agent status is drawn with.
@@ -253,6 +296,8 @@ pub struct Config {
     /// Which releases the in-app updater offers.
     pub updates: UpdatesConfig,
     pub usage: crate::usage::UsageConfig,
+    /// How linked worktrees are marked apart from their main checkout.
+    pub worktrees: crate::worktree_identity::Worktrees,
     /// What Toggle Zen Mode does beyond hiding the chrome.
     pub zen: Zen,
     // keep-sorted end
@@ -323,10 +368,6 @@ pub enum FileTarget {
     System,
 }
 
-/// The daemon's config is read for a handful of keys, so a file far larger
-/// than any hand-written config is skipped rather than parsed on every load.
-const MAX_DAEMON_CONFIG_BYTES: u64 = 1 << 20;
-
 impl Default for Config {
     fn default() -> Self {
         let fonts::DefaultFonts {
@@ -350,6 +391,7 @@ impl Default for Config {
             backdrop: Backdrop::default(),
             bell: BellConfig::default(),
             boat: BoatConfig::default(),
+            chat: chat::ChatConfig::default(),
             clipboard_overrides: ClipboardToastSettings::default(),
             clipboard_toast: ClipboardToast::default(),
             cloud: CloudConfig::default(),
@@ -358,6 +400,7 @@ impl Default for Config {
             confirm_close_pane: true,
             confirm_close_tab: true,
             confirm_close_workspace: true,
+            container: ContainerConfig::default(),
             contrast: Contrast::default(),
             daytona: DaytonaConfig::default(),
             devices: BTreeMap::new(),
@@ -377,18 +420,22 @@ impl Default for Config {
             notifications: NotificationConfig::default(),
             open_files_in: FileTarget::default(),
             open_links_in: LinkTarget::default(),
+            opensandbox: OpenSandboxConfig::default(),
             option_as_alt: OptionAsAlt::default(),
             palette: crate::palette::PaletteConfig::default(),
             pane_keys: PaneKeys::new(),
             px0: crate::px0::Config::default(),
+            remote: RemoteConfig::default(),
             remote_files: RemoteFilesConfig::default(),
             remove_merged_worktrees: false,
             show_agents: true,
             show_agents_header: true,
             show_device_icons: true,
+            show_gpu_load: false,
             show_listening_ports: true,
             show_network_quality: false,
             show_repository_icons: true,
+            show_sidebar_gpu_load: false,
             show_sidebar_search: true,
             show_system_load: true,
             show_window_controls: cfg!(target_os = "linux"),
@@ -397,6 +444,7 @@ impl Default for Config {
             sidebar_style: SidebarStyle::default(),
             smooth_scroll: true,
             sound: SoundConfig::default(),
+            sprites: SpritesConfig::default(),
             status_bar: StatusBar::default(),
             status_icons: StatusIcons::default(),
             tab_layout: TabLayoutMode::default(),
@@ -410,6 +458,7 @@ impl Default for Config {
             unknown_keys: Vec::new(),
             updates: UpdatesConfig::default(),
             usage: crate::usage::UsageConfig::default(),
+            worktrees: crate::worktree_identity::Worktrees::default(),
             zen: Zen::default(),
             // keep-sorted end
         }
@@ -427,6 +476,7 @@ struct Settings {
     backdrop: Backdrop,
     bell: BellConfig,
     boat: BoatConfig,
+    chat: chat::ChatConfig,
     clipboard_toast: ClipboardToastSettings,
     cloud: CloudConfig,
     code: CodeConfig,
@@ -434,6 +484,7 @@ struct Settings {
     confirm_close_pane: Option<bool>,
     confirm_close_tab: Option<bool>,
     confirm_close_workspace: Option<bool>,
+    container: ContainerConfig,
     contrast: Contrast,
     daytona: DaytonaConfig,
     devices: BTreeMap<String, DeviceSettings>,
@@ -448,24 +499,29 @@ struct Settings {
     notifications: NotificationSettings,
     open_files_in: FileTarget,
     open_links_in: LinkTarget,
+    opensandbox: OpenSandboxConfig,
     option_as_alt: OptionAsAlt,
     palette: crate::palette::PaletteConfig,
     pane_keys: PaneKeys,
     px0: crate::px0::Config,
+    remote: RemoteConfig,
     remote_files: RemoteFilesSettings,
     remove_merged_worktrees: Option<bool>,
     show_agents: Option<bool>,
     show_agents_header: Option<bool>,
     show_device_icons: Option<bool>,
+    show_gpu_load: Option<bool>,
     show_listening_ports: Option<bool>,
     show_network_quality: Option<bool>,
     show_repository_icons: Option<bool>,
+    show_sidebar_gpu_load: Option<bool>,
     show_sidebar_search: Option<bool>,
     show_system_load: Option<bool>,
     show_window_controls: Option<bool>,
     sidebar: sidebar_style::SidebarSettings,
     smooth_scroll: Option<bool>,
     sound: SoundConfig,
+    sprites: SpritesConfig,
     status_bar: StatusBar,
     status_icons: Option<status_icons::SavedIcons>,
     tab_layout: TabLayoutMode,
@@ -475,23 +531,14 @@ struct Settings {
     ui: FontSettings,
     updates: UpdatesConfig,
     usage: crate::usage::UsageConfig,
+    worktrees: worktrees::WorktreeSettings,
     zen: zen::ZenSettings,
     // keep-sorted end
 }
 
 /// Windows sets `USERPROFILE` rather than `HOME`, and upstream Herdr reads both.
 pub(crate) fn home() -> Result<PathBuf> {
-    let variable = |name| env::var_os(name).filter(|value: &std::ffi::OsString| !value.is_empty());
-    variable("HOME")
-        .or_else(|| {
-            if cfg!(windows) {
-                variable("USERPROFILE")
-            } else {
-                None
-            }
-        })
-        .map(PathBuf::from)
-        .ok_or(Error::MissingHome)
+    herdr_client::local_path::home_dir().ok_or(crate::Error::MissingHome)
 }
 
 /// The directory holding this app's `herdr` configuration directory. Upstream
@@ -499,107 +546,36 @@ pub(crate) fn home() -> Result<PathBuf> {
 /// the daemon's, so the same root has to be used on both sides, including the
 /// login shell's `XDG_CONFIG_HOME` for a launch that did not inherit it.
 fn config_root() -> Result<PathBuf> {
-    match herdr_client::local_var("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
-        Some(value) => {
-            let path = PathBuf::from(value);
-            if !path.is_absolute() {
-                return Err(Error::RelativeConfigRoot);
-            }
-            Ok(path)
-        }
-        None => {
-            #[cfg(windows)]
-            if let Some(roaming) = env::var_os("APPDATA").filter(|value| !value.is_empty()) {
-                return Ok(PathBuf::from(roaming));
-            }
-            #[cfg(windows)]
-            return Ok(home()?.join("AppData").join("Roaming"));
-            #[cfg(not(windows))]
-            Ok(home()?.join(".config"))
-        }
-    }
-}
-
-/// The daemon's own config file, resolved exactly as herdr resolves it. Every
-/// GUI reader of those settings shares this one answer.
-pub(crate) fn daemon_config_path(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
-    if let Some(path) = get("HERDR_CONFIG_PATH") {
-        return path.into();
-    }
-    let root = get("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            #[cfg(windows)]
-            {
-                if let Some(root) = get("APPDATA") {
-                    return PathBuf::from(root);
-                }
-                get("HOME")
-                    .or_else(|| get("USERPROFILE"))
-                    .map(PathBuf::from)
-                    .map(|home| home.join("AppData/Roaming"))
-                    .unwrap_or_else(env::temp_dir)
-            }
-            #[cfg(not(windows))]
-            get("HOME")
-                .map(PathBuf::from)
-                .map(|home| home.join(".config"))
-                .unwrap_or_else(env::temp_dir)
-        });
-    // Share production TUI settings even in a debug GUI build or SSH session.
-    root.join("herdr/config.toml")
-}
-
-/// What the GUI honors from the daemon's own config.
-#[derive(Clone, Debug, Default)]
-struct Daemon {
-    clipboard_toast: ClipboardToast,
-    keys: DaemonKeys,
-    sidebar_layout: SidebarLayout,
-}
-
-/// A config file the GUI does not own can hold anything, including settings
-/// from a newer herdr, so only the keys read here matter and anything
-/// unreadable, oversized, malformed, or unrecognized leaves the defaults alone.
-fn daemon_settings(path: &Path) -> Daemon {
-    if fs::metadata(path).is_ok_and(|data| data.len() > MAX_DAEMON_CONFIG_BYTES) {
-        return Daemon::default();
-    }
-    let Some(table) = fs::read_to_string(path)
-        .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-    else {
-        return Daemon::default();
-    };
-    Daemon {
-        clipboard_toast: daemon_clipboard_toast(&table),
-        keys: DaemonKeys::from_table(table.get("keys").and_then(toml::Value::as_table)),
-        sidebar_layout: SidebarLayout::from_daemon_config(&table).unwrap_or_default(),
-    }
-}
-
-fn daemon_clipboard_toast(table: &toml::Table) -> ClipboardToast {
-    let mut resolved = ClipboardToast::default();
-    let Some(clipboard) = table
-        .get("ui")
-        .and_then(|ui| ui.get("toast")?.get("clipboard")?.as_table())
-    else {
-        return resolved;
-    };
-    if let Some(enabled) = clipboard.get("enabled").and_then(toml::Value::as_bool) {
-        resolved.enabled = enabled;
-    }
-    if let Some(position) = clipboard
-        .get("position")
-        .cloned()
-        .and_then(|position| position.try_into().ok())
-    {
-        resolved.position = position;
-    }
-    resolved
+    use herdr_client::local_path::PathError;
+    herdr_client::local_path::config_root().map_err(|error| match error {
+        PathError::MissingHome => crate::Error::MissingHome,
+        PathError::RelativeConfigRoot => crate::Error::RelativeConfigRoot,
+    })
 }
 
 impl Config {
+    /// Whether hosts' GPUs are read: while the status bar or the sidebar
+    /// shows them. The Overview and Devices pages then show them too; with
+    /// both off no GPU tool runs on any host.
+    pub(crate) fn gpu_sampled(&self) -> bool {
+        self.show_gpu_load || self.show_sidebar_gpu_load
+    }
+
+    /// The provider tables `herdr-remote` reads, from a full load.
+    pub(crate) fn load_remote()
+    -> std::result::Result<herdr_remote::config::Sections, herdr_remote::config::LoadError> {
+        let config = Self::load()?;
+        Ok(herdr_remote::config::Sections {
+            azure: config.azure,
+            boat: config.boat,
+            coder: config.coder,
+            container: config.container,
+            daytona: config.daytona,
+            opensandbox: config.opensandbox,
+            sprites: config.sprites,
+        })
+    }
+
     pub fn path() -> Result<PathBuf> {
         Ok(config_root()?.join("herdr/config-gpui.toml"))
     }
@@ -679,9 +655,9 @@ impl Config {
                 Ok(text) if text.lines().next() != Some(MANAGED_HEADER) => (text, path.to_owned()),
                 Ok(_) => (LOCAL_CONFIG.into(), local),
                 Err(error) if error.kind() == ErrorKind::NotFound => (LOCAL_CONFIG.into(), local),
-                Err(error) => return Err(Error::from(error).at_path(path)),
+                Err(error) => return Err(crate::Error::from(error).at_path(path)),
             },
-            Err(error) => return Err(Error::from(error).at_path(&local)),
+            Err(error) => return Err(crate::Error::from(error).at_path(&local)),
         })
     }
 
@@ -690,8 +666,8 @@ impl Config {
     fn load_path(path: &Path, daemon: &Path) -> Result<Self> {
         let base = daemon_settings(daemon);
         let (_lock, local) = Self::prepare_files(path)?;
-        let text =
-            fs::read_to_string(&local).map_err(|error| Error::from(error).at_path(&local))?;
+        let text = fs::read_to_string(&local)
+            .map_err(|error| crate::Error::from(error).at_path(&local))?;
         // Validate the override independently so bad types/unknown keys cannot
         // disappear inside the merge. Empty arrays explicitly replace defaults.
         Self::parse_over(&text, &base).map_err(|error| error.at_path(&local))?;
@@ -786,7 +762,7 @@ impl Config {
                 })
             })
         {
-            return Err(Error::GitHubSecretInConfig(name));
+            return Err(crate::Error::GitHubSecretInConfig(name));
         }
         // A newer build may keep more accounts or owners than this one.
         unknown_keys.extend(settings.github.limit_accounts());
@@ -806,6 +782,8 @@ impl Config {
         #[cfg(feature = "boat")]
         settings.boat.settings_with(|_| None)?;
         config.boat = settings.boat;
+        settings.chat.check()?;
+        config.chat = settings.chat;
         settings.cloud.check()?;
         config.cloud = settings.cloud;
         // Check what the file says so a bad value is reported at load; the
@@ -813,9 +791,18 @@ impl Config {
         #[cfg(feature = "coder")]
         settings.coder.check()?;
         config.coder = settings.coder;
+        #[cfg(feature = "container")]
+        settings.container.settings()?;
+        config.container = settings.container;
         #[cfg(feature = "daytona")]
         settings.daytona.settings_with(|_| None)?;
         config.daytona = settings.daytona;
+        #[cfg(feature = "opensandbox")]
+        settings.opensandbox.settings_with(|_| None)?;
+        config.opensandbox = settings.opensandbox;
+        #[cfg(feature = "sprites")]
+        settings.sprites.settings_with(|_| None)?;
+        config.sprites = settings.sprites;
         config.features = settings.features;
         config.notification_overrides = settings.notifications;
         config.notifications = settings
@@ -841,7 +828,7 @@ impl Config {
         config.keybinding_overrides = settings.keybindings;
         config.pane_keys = settings.pane_keys;
         if settings.devices.len() > MAX_DEVICES {
-            return Err(Error::TooManyDevices(MAX_DEVICES));
+            return Err(Error::TooManyDevices(MAX_DEVICES).into());
         }
         for (id, device) in &settings.devices {
             device.validate(id)?;
@@ -851,7 +838,7 @@ impl Config {
         config.palette = settings.palette;
         if let Some(theme) = settings.theme {
             if theme.trim().is_empty() {
-                return Err(Error::EmptyTheme);
+                return Err(Error::EmptyTheme.into());
             }
             ThemeName::parse(&theme)?;
             config.theme = theme;
@@ -866,9 +853,11 @@ impl Config {
         config.show_agents = settings.show_agents.unwrap_or(true);
         config.show_agents_header = settings.show_agents_header.unwrap_or(true);
         config.show_device_icons = settings.show_device_icons.unwrap_or(true);
+        config.show_gpu_load = settings.show_gpu_load.unwrap_or(false);
         config.show_listening_ports = settings.show_listening_ports.unwrap_or(true);
         config.show_network_quality = settings.show_network_quality.unwrap_or(false);
         config.show_repository_icons = settings.show_repository_icons.unwrap_or(true);
+        config.show_sidebar_gpu_load = settings.show_sidebar_gpu_load.unwrap_or(false);
         config.show_sidebar_search = settings.show_sidebar_search.unwrap_or(true);
         config.show_system_load = settings.show_system_load.unwrap_or(true);
         config.show_window_controls = settings
@@ -882,6 +871,7 @@ impl Config {
         config.status_icons = status_icons;
         config.edge_rail = settings.edge_rail.unwrap_or(legacy_rail);
         config.zen = settings.zen.try_into()?;
+        config.worktrees = settings.worktrees.resolve()?;
         settings.backdrop.validate()?;
         config.backdrop = settings.backdrop;
         config.accent = settings.accent;
@@ -893,6 +883,8 @@ impl Config {
         config.code = settings.code;
         settings.px0.check()?;
         config.px0 = settings.px0;
+        settings.remote.check()?;
+        config.remote = settings.remote;
         config.open_files_in = settings.open_files_in;
         config.editor_command = settings.editor_command;
         config.keep_selection_after_copy = settings.keep_selection_after_copy.unwrap_or(true);

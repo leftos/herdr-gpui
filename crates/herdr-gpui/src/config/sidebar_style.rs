@@ -3,8 +3,9 @@
 //! the device footer is drawn, whose change counts a row shows, and whether
 //! the activity bar leads it.
 
+use super::Error;
 use super::fonts::FontSettings;
-use crate::{Error, Result};
+use crate::Result;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -44,7 +45,7 @@ impl SidebarOverrides {
             if let Some(value) = value
                 && (!value.is_finite() || !(0.0..=max).contains(&value))
             {
-                return Err(Error::InvalidSidebarMetric { key, max });
+                return Err(Error::InvalidSidebarMetric { key, max }.into());
             }
         }
         Ok(())
@@ -129,6 +130,9 @@ pub struct SidebarStyle {
     /// the sidebar and terminals, or an orchestrator section. On unless
     /// turned off.
     pub activity_bar: bool,
+    /// `automations`: the bar's Automations section, and Herdr UI reading
+    /// and starting each host's `herdr-automate`. On unless turned off.
+    pub automations: bool,
     pub change_counts: ChangeCounts,
     pub device_footer: DeviceFooter,
     /// A colour per host, keyed by the host's display name, as `0xRRGGBB`.
@@ -141,6 +145,7 @@ impl Default for SidebarStyle {
     fn default() -> Self {
         Self {
             activity_bar: true,
+            automations: true,
             change_counts: ChangeCounts::default(),
             device_footer: DeviceFooter::default(),
             hosts: BTreeMap::new(),
@@ -176,6 +181,7 @@ pub(super) struct SidebarSettings {
     pub(super) change_counts: ChangeCounts,
     pub(super) hosts: BTreeMap<String, String>,
     pub(super) activity_bar: Option<bool>,
+    pub(super) automations: Option<bool>,
 }
 
 impl SidebarSettings {
@@ -193,9 +199,10 @@ impl SidebarSettings {
                         value: value.clone(),
                     })
             })
-            .collect::<Result<_>>()?;
+            .collect::<Result<_, Error>>()?;
         Ok(SidebarStyle {
             activity_bar: self.activity_bar.unwrap_or(true),
+            automations: self.automations.unwrap_or(true),
             change_counts: self.change_counts,
             device_footer: self.device_footer,
             hosts,
@@ -237,6 +244,7 @@ impl<'de> Deserialize<'de> for SidebarSettings {
                         "device_footer" => settings.device_footer = map.next_value()?,
                         "change_counts" => settings.change_counts = map.next_value()?,
                         "activity_bar" => settings.activity_bar = Some(map.next_value()?),
+                        "automations" => settings.automations = Some(map.next_value()?),
                         "hosts" => settings.hosts = map.next_value()?,
                         _ => {
                             map.next_value::<serde::de::IgnoredAny>()?;

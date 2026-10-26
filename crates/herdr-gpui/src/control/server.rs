@@ -4,10 +4,12 @@
 //! page) is parked as a [`Watch`] and checked on every tick.
 mod app;
 mod browser;
+mod chat;
 mod cloud;
 mod events;
 mod hosts;
 mod links;
+mod remote;
 mod settings;
 mod tabs;
 mod work;
@@ -242,7 +244,9 @@ fn named_window(request: &Request) -> Option<u64> {
         Request::Settings(call) => call.caller.window,
         Request::Events(call) => call.caller.window,
         Request::Link(call) => call.caller.window,
+        Request::Chat(call) => call.caller.window,
         Request::Cloud(call) => call.caller.window,
+        Request::Remote(call) => call.caller.window,
     }
 }
 
@@ -255,6 +259,7 @@ fn serve(incoming: socket::Incoming, state: &mut State, cx: &mut App) {
             | Request::Settings(_)
             | Request::Events(_)
             | Request::Cloud(_)
+            | Request::Remote(_)
     );
     if let Some(id) = named_window(&incoming.request)
         && !main_windows(cx)
@@ -287,7 +292,9 @@ fn serve(incoming: socket::Incoming, state: &mut State, cx: &mut App) {
         Request::Settings(call) => settings::serve(call, incoming, &mut state.watches, cx),
         Request::Events(call) => events::serve(call, incoming, &mut state.watches, cx),
         Request::Link(call) => incoming.respond(links::serve(call, cx)),
+        Request::Chat(call) => incoming.respond(chat::serve(call, cx)),
         Request::Cloud(call) => cloud::serve(call, incoming, &mut state.watches, cx),
+        Request::Remote(call) => remote::serve(call, incoming, &mut state.watches, cx),
     }
 }
 
@@ -308,7 +315,7 @@ fn keep_undelivered(request: super::protocol::FeedbackRequest, text: String, cx:
 /// Starts answering requests. A second app instance leaves the first one's
 /// socket alone and simply does not listen.
 pub(crate) fn install(cx: &mut App) {
-    let server = match socket_path().and_then(|path| socket::Server::bind(&path)) {
+    let server = match socket_path().and_then(|path| Ok(socket::Server::bind(&path)?)) {
         Ok(server) => server,
         Err(error) => {
             tracing::warn!(%error, "Control socket unavailable");

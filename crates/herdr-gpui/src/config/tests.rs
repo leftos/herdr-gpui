@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::Context as _;
+use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod accent;
@@ -37,6 +38,7 @@ mod notification_settings;
 mod omarchy_theme;
 mod preferences;
 mod px0;
+mod remote;
 mod remote_files;
 mod repository_icons;
 mod sidebar_scope;
@@ -46,6 +48,7 @@ mod sidebar_style;
 mod sound_volume;
 mod status_bar;
 mod status_bar_awake_scope;
+mod status_bar_gpu;
 mod status_icons;
 mod system_themes;
 mod tab_layout;
@@ -54,6 +57,7 @@ mod theme_files;
 mod themes;
 mod update_channel;
 mod usage_inline;
+mod worktrees;
 mod zen;
 
 struct TempDirectory(PathBuf);

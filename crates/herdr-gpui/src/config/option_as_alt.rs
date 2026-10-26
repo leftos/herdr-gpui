@@ -1,5 +1,4 @@
-//! The macOS Option key: whether it sends Alt to a pane or types the
-//! character the keyboard layout puts on it.
+//! `option_as_alt`: whether macOS Option reaches a pane as Alt.
 use serde::Deserialize;
 
 /// Whether macOS Option sends Alt shortcuts to a pane or types the character
